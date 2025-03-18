@@ -40,6 +40,7 @@ parser.add_argument("--esn", action="store_true")
 parser.add_argument("--ron", action="store_true")
 parser.add_argument("--deepron", action="store_true")
 parser.add_argument("--concat", action="store_true")
+parser.add_argument("--cycle", action="store_true")
 parser.add_argument("--batch", type=int, default=4)
 parser.add_argument("--n_hid", type=int, default=100)
 parser.add_argument("--dt", type=float, default=0.0075)
@@ -107,7 +108,7 @@ if args.resultroot is None:
 
 n_inp = 1
 n_out = 1
-washout = 100
+washout = 600
 # TODO this should be set automatically to double of units of the model
 delay = args.delay
 
@@ -197,7 +198,7 @@ var_train, var_test = [], []
 for t in range(args.trials):
     if args.esn:
         model = DeepReservoir(
-            n_inp,
+            input_size=n_inp,
             tot_units=args.n_hid,
             n_layers=args.n_layers,
             concat=args.concat,
@@ -205,10 +206,11 @@ for t in range(args.trials):
             inter_scaling=args.inp_scaling,
             input_scaling=args.inp_scaling,
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
-            connectivity_recurrent=int((1 - args.sparsity) * args.n_hid/args.n_layers),
-            connectivity_input=int((1 - args.sparsity) * args.n_hid/args.n_layers),
-            connectivity_inter=int((1 - args.sparsity) * args.n_hid/args.n_layers),
+            connectivity_recurrent=int(args.n_hid / args.n_layers),
+            connectivity_input=int(args.n_hid / args.n_layers),
+            connectivity_inter=int(args.n_hid / args.n_layers),
             leaky=args.leaky,
+            cycle=args.cycle,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
@@ -242,25 +244,19 @@ for t in range(args.trials):
             connectivity_input=int(args.n_hid / args.n_layers),
             connectivity_inter=int(args.n_hid / args.n_layers),
             concat=args.concat,
+            cycle=args.cycle,
         ).to(device)
     else:
         raise ValueError("Wrong model choice.")
 
-    # Print model with number of units in each layer
     print(model)
-    # Print number of parameters
-    # as in the paper this is R(R+U+1) the one is for the bias for a layer l, so
-    # one layer with 10 has 101, then we sum across
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
-           
-    # count biases and weights for each layer
     print(f"Number of parameters per layer: {count_parameters(model)}")
     
     total_train_memory, total_test_memory, total_val_memory = 0, 0, 0 
         
     num_steps = 6000
-    train_steps = 4000
-    valid_step = 1000
+    train_steps = 5000
     test_steps = 1000
     
     u = np.random.uniform(-0.8, 0.8, size=(num_steps+delay, 1))
@@ -277,56 +273,48 @@ for t in range(args.trials):
         
     for i in tqdm(range(1, delay + 1)):
              
-        print(args.concat)
         states_i = states_u[i:num_steps, :]
-        target = u[: num_steps - i, 0]
+        target = u[: num_steps - i]
             
         split_idx_train = train_steps - i
-        split_idx_valid = split_idx_train + valid_step
-        split_idx_test = split_idx_valid + test_steps
+        split_idx_test = split_idx_train + test_steps
         
+        y_train, y_test = target[:split_idx_train], target[split_idx_train:split_idx_test]
         
-        #y_train, y_test = target[:split_idx], target[split_idx:split_idx + test_steps]
-        #X_train, X_test = states_i[:split_idx, :], states_i[split_idx:split_idx + test_steps, :]
-       
-       # Splits
-        y_train, y_valid, y_test = (target[:split_idx_train], 
-                                   target[split_idx_train:split_idx_valid], 
-                                   target[split_idx_valid:split_idx_test])
-        
-        X_train, X_valid, X_test = (states_i[:split_idx_train, :],
-                                    states_i[split_idx_train:split_idx_valid, :],
-                                    states_i[split_idx_valid:split_idx_test, :])
-        
+        X_train, X_test = (states_i[:split_idx_train, :], states_i[split_idx_train:split_idx_test, :])
+                                    
+                                
         # add washout
-        y_train, y_test, y_valid = y_train[washout:], y_test[washout:], y_valid[washout:]
-        X_train, X_test, X_valid = X_train[washout:], X_test[washout:], X_valid[washout:] 
-        
+        y_train, y_test = y_train[washout:], y_test[washout:]
+        X_train, X_test = X_train[washout:], X_test[washout:]
         
         # Normalize the data
         scaler = preprocessing.StandardScaler().fit(X_train)
         X_train = scaler.transform(X_train)
         X_test = scaler.transform(X_test)
-        X_valid = scaler.transform(X_valid)
         
         # Train a classifier
-        classifier = Ridge(max_iter=1000, alpha=1e-6)
+        classifier = Ridge(max_iter=1000, alpha=0)
         classifier.fit(X_train, y_train)
         
         y_hat = classifier.predict(X_train)
         y_hat_test = classifier.predict(X_test)
-        y_hat_valid = classifier.predict(X_valid)
         
         train_memory = square_correlation(y_hat, y_train)
         test_memory = square_correlation(y_hat_test, y_test)
-        valid_memory = square_correlation(y_hat_valid, y_valid)
+        
+        # handle if larger than 1 with an error
+        if train_memory > 1:
+            raise ValueError("Train memory is larger than 1")
+        if test_memory > 1:
+            raise ValueError("Test memory is larger than 1")
         
         print("Train memory: ", train_memory, "Test memory: ", test_memory)
         total_train_memory += train_memory
         total_test_memory += test_memory
-        total_val_memory += valid_memory
         train_memory_dict[i].append(train_memory)
         test_memory_dict[i].append(test_memory)
+        
         
         print(
             f"Trial {t}, delay {i+1}/{delay}, "  
@@ -336,7 +324,7 @@ for t in range(args.trials):
             "\n",
             f"total train memory: {round(total_train_memory, 2)}, "
             f"total test memory: {round(total_test_memory, 2)}",
-            f"total valid memory: {round(total_val_memory, 2)}",
+            #f"total valid memory: {round(total_val_memory, 2)}",
             f"\n"
         )
     # these is the variance between the trials
@@ -346,24 +334,26 @@ for t in range(args.trials):
     total_test_memory = 0
     total_train_memory = 0
     
-if args.remote:
-    args.resultroot = "/data/v.gargano"    
-    if args.ron:
-        f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_RON_{args.topology}{args.resultsuffix}.txt"), "a")
-    elif args.deepron:
-        f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_DEEPRON{args.resultsuffix}.txt"), "a")
-    elif args.esn:
-        f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_ESN{args.resultsuffix}.txt"), "a")
-    else:
-        raise ValueError("Wrong model choice.")
+if args.ron:
+    f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_RON_{args.topology}{args.resultsuffix}.txt"), "a")
+elif args.deepron:
+    f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_DEEPRON{args.resultsuffix}.txt"), "a")
+elif args.esn:
+    f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_ESN{args.resultsuffix}.txt"), "a")
+else:
+    raise ValueError("Wrong model choice.")
 
 # sum train, valid and test memory dict lists and divide by the number of trials
 train_memory = sum([sum(v) for k, v in train_memory_dict.items()]) / args.trials
 test_memory = sum([sum(v) for k, v in test_memory_dict.items()]) / args.trials
-valid_memory = sum([sum(v) for k, v in valid_memory_dict.items()]) / args.trials
 
+if args.cycle:
+    cycle = "simple cycle"
+else:
+    cycle = "no cycle"
+    
 plt = plot_statistics(train_memory_dict, test_memory_dict, model=model)
-plt.savefig(os.path.join(args.resultroot, f"MemoryCapacity_plot{args.resultsuffix}{args.delay}{model.__class__.__name__}{args.n_layers}.png"))
+plt.savefig(os.path.join(args.resultroot, f"MemoryCapacity_plot{args.resultsuffix}{args.delay}{model.__class__.__name__}{args.n_layers}{cycle}.png"))
 plotly_fig = tls.mpl_to_plotly(plt.gcf())
 
 if args.wandb:

@@ -5,6 +5,11 @@ from typing import (
     Union,
 )
 
+# import torch 1d convolution
+import torch.nn.functional as F
+from torch.nn import Conv1d
+
+
 import torch
 from torch import nn
 
@@ -52,6 +57,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         reservoir_scaler=0.0,
         sparsity=0.0,
         device="cpu",
+        cycle: bool = False,
     ):
         """Initialize the RON model.
 
@@ -80,6 +86,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         self.n_hid = n_hid
         self.device = device
         self.dt = dt
+        self.cycle = cycle
         self.diffusive_matrix = diffusive_gamma * torch.eye(n_hid).to(device)
         if isinstance(gamma, tuple):
             gamma_min, gamma_max = gamma
@@ -105,14 +112,28 @@ class RandomizedOscillatorsNetwork(nn.Module):
             h2h = spectral_norm_scaling(h2h, rho)              
         self.h2h = nn.Parameter(h2h, requires_grad=False)
 
+        # add the last hidden state to the input trough a projection
+        if self.cycle:
+            # construct recurrent kerel as in h2h
+            #l2x = get_hidden_topology(n_hid, topology, sparsity, reservoir_scaler)
+            #if topology != 'antisymmetric':
+            #    l2x = spectral_norm_scaling(l2x, rho)
+            #self.l2x = nn.Parameter(l2x, requires_grad=False)
+            # recurrent kernel
+            l2x = (2*(torch.rand(n_hid, n_hid)) - 1) * input_scaling
+            self.l2x = nn.Parameter(l2x, requires_grad=False
+            )   
+        else:
+            # nothing
+            pass
+        
         x2h = torch.rand(n_inp, n_hid) * input_scaling
         self.x2h = nn.Parameter(x2h, requires_grad=False)
         bias = (torch.rand(n_hid) * 2 - 1) * input_scaling
         self.bias = nn.Parameter(bias, requires_grad=False)
 
     def cell(
-        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor, first_layer: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute the next hidden state and its derivative.
 
         Args:
@@ -124,18 +145,25 @@ class RandomizedOscillatorsNetwork(nn.Module):
         hz = hz.to(x.dtype)
         hy = hy.to(x.dtype)
         
-        hz = hz + self.dt * (
+        last_hidden_part = 0
+        
+        if first_layer and self.cycle:
+            # take previous last hidden state and add it to the input
+            last_hidden_part = torch.mm(hy, self.l2x.to(dtype=x.dtype))
+        
+        
+        hz = last_hidden_part + hz + self.dt * (
             torch.tanh(
                 torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype) - self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype)
             )
             - self.gamma * hy
             - self.epsilon * hz
-        )
+        ) 
 
         hy = hy + self.dt * hz
         return hy, hz
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, first_layer=False) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Forward pass on a given input time-series.
 
         Args:
@@ -149,7 +177,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         hz = torch.zeros(x.size(0), self.n_hid).to(self.device)
         all_states = []
         for t in range(x.size(1)):
-            hy, hz = self.cell(x[:, t], hy, hz)
+            hy, hz = self.cell(x[:, t], hy, hz, first_layer)
             all_states.append(hy)
 
         return torch.stack(all_states, dim=1), [
@@ -166,7 +194,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
     oscillatory dynamics stacked in layers. The model is defined by the following ordinary
     differential equation:
 
-    .. math::
+    .. math::#TODO Add layers notation
         \\dot{h} = -\\gamma h - \\epsilon \\dot{h} + \\tanh(W_{in} x + W_{rec} h + b)
 
     where:
@@ -204,6 +232,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         # TODO implement sparse connectivity later...
         connectivity_input: int = 10,
         connectivity_inter: int = 10,
+        cycle: bool = False,
     ):
         """Initialize the DeepRON model.
 
@@ -219,14 +248,13 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         self.n_layers = n_layers
         self.total_units = total_units
         self.reservoir_scaler = reservoir_scaler
-        # if True, then the input and output tensors are provided as (batch, seq, feature)
-        #self.batch_first = True
-        
+        #self.n_inp = n_inp
         self.layers = nn.ModuleList()   
+        self.cycle = cycle
         
         self.concat = concat
 
-        if concat:
+        if concat or True:
             self.layer_units = int(total_units / n_layers) 
         else:
             self.layer_units = total_units
@@ -242,7 +270,8 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     dt=dt,
                                     gamma=gamma,
                                     epsilon=epsilon,
-                                    reservoir_scaler=self.reservoir_scaler
+                                    reservoir_scaler=self.reservoir_scaler,
+                                    cycle=self.cycle,
                                     #TODO still sparse connectivity to implement
                                     #connectivity_input=connectivity_input_1,
                                     #connectivity_recurrent=connectivity_input_others,
@@ -259,6 +288,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     dt=dt,
                     gamma=gamma,
                     epsilon=epsilon,
+                    cycle=self.cycle,
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
                 )
@@ -281,12 +311,18 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         layer_states = []
         # list to store the hidden states of each layer
         states = []
-        
-        for _, ron_layer in enumerate(self.ron_reservoir):
-            [hy, last_state] = ron_layer(hy)
-            states.append(hy)
-            layer_states.append(last_state[0])
-        
+       
+        if self.cycle: 
+            for i, ron_layer in enumerate(self.ron_reservoir):
+                [hy, last_state] = ron_layer(hy, first_layer=(i == 0))
+                states.append(hy)
+                layer_states.append(last_state[0])
+        else:
+            for i, ron_layer in enumerate(self.ron_reservoir):
+                [hy, last_state] = ron_layer(hy)
+                states.append(hy)
+                layer_states.append(last_state[0])
+            
         states_uncat = states
         
         if self.concat:
@@ -298,5 +334,4 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             
        # Choose if return all_states from all layers for the  
        
-        return hy, layer_states, states_uncat
-        
+        return hy, layer_states#, states_uncat

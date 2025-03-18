@@ -149,8 +149,6 @@ for i in range(args.trials):
             concat=True,
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
-            connectivity_recurrent=int((1 - args.sparsity) * args.n_hid//args.n_layers),
-            connectivity_input=int((1 - args.sparsity) * n_inp),
             leaky=args.leaky, 
         ).to(device)
     elif args.ron:
@@ -181,9 +179,9 @@ for i in range(args.trials):
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,
             # This is not used in ron, to scale internal recurrent use reservoir scalre
-            reservoir_scaler=args.inp_scaling,
+            reservoir_scaler=0,
             device=device,
-            connectivity_input=int((1-args.sparsity * n_inp)),
+            connectivity_input=int((1-args.sparsity *n_inp)),  
             connectivity_inter=int(args.n_hid / args.n_layers),
             concat=True,
         ).to(device)
