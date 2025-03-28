@@ -114,15 +114,8 @@ class RandomizedOscillatorsNetwork(nn.Module):
 
         # add the last hidden state to the input trough a projection
         if self.cycle:
-            # construct recurrent kerel as in h2h
-            #l2x = get_hidden_topology(n_hid, topology, sparsity, reservoir_scaler)
-            #if topology != 'antisymmetric':
-            #    l2x = spectral_norm_scaling(l2x, rho)
-            #self.l2x = nn.Parameter(l2x, requires_grad=False)
-            # recurrent kernel
-            l2x = (2*(torch.rand(n_hid, n_hid)) - 1) * input_scaling
-            self.l2x = nn.Parameter(l2x, requires_grad=False
-            )   
+            l2x = (2*(torch.rand(n_hid, n_hid))-1) * input_scaling
+            self.l2x = nn.Parameter(l2x, requires_grad=False)   
         else:
             # nothing
             pass
@@ -152,13 +145,13 @@ class RandomizedOscillatorsNetwork(nn.Module):
             last_hidden_part = torch.mm(hy, self.l2x.to(dtype=x.dtype))
         
         
-        hz = last_hidden_part + hz + self.dt * (
+        hz = hz + self.dt * (
             torch.tanh(
                 torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype) - self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype)
-            )
+            + last_hidden_part)
             - self.gamma * hy
             - self.epsilon * hz
-        ) 
+        )
 
         hy = hy + self.dt * hz
         return hy, hz
@@ -196,6 +189,8 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
 
     .. math::#TODO Add layers notation
         \\dot{h} = -\\gamma h - \\epsilon \\dot{h} + \\tanh(W_{in} x + W_{rec} h + b)
+    .. math:: If we consider the cycle version
+        \\dot{h} = -\\gamma h - \\epsilon \\dot{h} + \\tanh(W_{in} x + W_{rec} h + b + F*h_{t-1})
 
     where:
     - :math:`h` is the hidden state,
@@ -285,17 +280,19 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                 RandomizedOscillatorsNetwork(
                     n_inp=last_h_size, n_hid=self.layer_units,
                     input_scaling=input_scaling_others,
-                    dt=dt,
+                    # slighlty change the dt for each layer by adding incrementally for each layer the dt 
+                    # try to change a little bit the dt for each layer (add noise -0.05, 0.05 for example)
+                    dt= dt,
                     gamma=gamma,
                     epsilon=epsilon,
                     cycle=self.cycle,
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
                 )
+                # save for each layer the dt used for layers random
             )
             last_h_size = self.layer_units
         self.ron_reservoir = nn.ModuleList(deepron_layers)
-        
     
     def forward(self, hy: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Forward pass on the layers of the DeepRON a given input time-series.

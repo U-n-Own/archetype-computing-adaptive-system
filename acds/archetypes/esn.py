@@ -100,18 +100,18 @@ class ReservoirCell(torch.nn.Module):
 
         # projection kernel
 
+#            self.projection_kernel = (
+#                #sparse_tensor_init(self.units, self.last_hidden_size, self.units)
+#                #nn.Linear(self.units, self.last_hidden_size, bias=True).weight * self.input_scaling
+#                # Make this projection kernel same as recurrent kenrnel matrix
+#                sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
+#                #nn.init.uniform_(torch.empty(self.units, self.last_hidden_size), -1, 1) * self.input_scaling
+#            )
+#        
+#            self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
         if self.cycle:
-            self.projection_kernel = (
-                #sparse_tensor_init(self.units, self.last_hidden_size, self.units)
-                #nn.Linear(self.units, self.last_hidden_size, bias=True).weight * self.input_scaling
-                # Make this projection kernel same as recurrent kenrnel matrix
-                sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
-                #nn.init.uniform_(torch.empty(self.units, self.last_hidden_size), -1, 1) * self.input_scaling
-            )
-        
-            self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
             # between -1 1
-            #self.projection_kernel = nn.init.uniform_(self.projection_kernel, -1, 1)        
+            self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
             
             self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
         

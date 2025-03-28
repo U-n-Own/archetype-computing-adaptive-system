@@ -50,6 +50,7 @@ parser.add_argument("--gamma_range", type=float, default=0.5)
 parser.add_argument("--epsilon_range", type=float, default=1)
 parser.add_argument("--rho", type=float, default=0.99)
 parser.add_argument("--inp_scaling", type=float, default=1)
+parser.add_argument("--inter_scaling", type=float, default=1)
 parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radius")
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers of ESN")
 parser.add_argument(
