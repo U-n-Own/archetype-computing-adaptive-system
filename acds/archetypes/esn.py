@@ -98,17 +98,6 @@ class ReservoirCell(torch.nn.Module):
             self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
         self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
 
-        # projection kernel
-
-#            self.projection_kernel = (
-#                #sparse_tensor_init(self.units, self.last_hidden_size, self.units)
-#                #nn.Linear(self.units, self.last_hidden_size, bias=True).weight * self.input_scaling
-#                # Make this projection kernel same as recurrent kenrnel matrix
-#                sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
-#                #nn.init.uniform_(torch.empty(self.units, self.last_hidden_size), -1, 1) * self.input_scaling
-#            )
-#        
-#            self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
         if self.cycle:
             # between -1 1
             self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
