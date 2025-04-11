@@ -99,16 +99,20 @@ class ReservoirCell(torch.nn.Module):
         self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
 
         if self.cycle:
-            # between -1 1
+            # between -1 and 1
             self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
-            
+            #init like recurrent
+            #self.projection_kernel = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
+            #self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
+            # use same as sparse_recurrent_tensor_init
+
             self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
-        
+    
         # uniform init in [-1, +1] times input_scaling
         self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
         self.bias = nn.Parameter(self.bias, requires_grad=False)
 
-    def forward(self, xt: torch.Tensor, h_prev: torch.Tensor, first_layer: bool = False):
+    def forward(self, xt: torch.Tensor, h_prev: torch.Tensor, first_layer: bool = False, h_last: Optional[torch.Tensor] = None):
         """Computes the output of the cell given the input and previous state.
 
         Args:
@@ -118,14 +122,17 @@ class ReservoirCell(torch.nn.Module):
         Returns:
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
-        """ 
-        
+        """     
+    
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         # check if first layer
-        if first_layer and self.cycle:
+        if self.cycle and first_layer and h_last is not None:
+            # dimension check
+            assert h_last.size(1) == self.units, f"Mismatch in hidden dimensions: expected {self.units}, got {h_last.size(1)}"
             # init h_last
-            last_hidden_part = torch.mm(h_prev, self.projection_kernel.to(dtype=xt.dtype))
+            h_to_project = h_last
+            last_hidden_part = torch.mm(h_to_project, self.projection_kernel.to(dtype=xt.dtype))
             output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype))
         else:
             output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
@@ -191,7 +198,7 @@ class ReservoirLayer(torch.nn.Module):
         """
         return torch.zeros(batch_size, self.net.units)
 
-    def forward(self, x: torch.Tensor, h_prev: Optional[torch.Tensor] = None, first_layer: bool = False):
+    def forward(self, x: torch.Tensor, h_prev: Optional[torch.Tensor] = None, first_layer: bool = False, h_last: Optional[torch.Tensor] = None):
         """Computes the output of the cell given the input and previous state.
 
         Args:
@@ -203,14 +210,14 @@ class ReservoirLayer(torch.nn.Module):
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
         """
-
         if h_prev is None:
             h_prev = self.init_hidden(x.shape[0]).to(x.device)
 
+        # make such that if we here are at first layer 
         hs = []
         for t in range(x.shape[1]):
             xt = x[:, t]
-            _, h_prev = self.net(xt, h_prev, first_layer)
+            _, h_prev = self.net(xt, h_prev, first_layer, h_last)
             hs.append(h_prev)
         hs = torch.stack(hs, dim=1)
         return hs, h_prev
@@ -273,6 +280,7 @@ class DeepReservoir(torch.nn.Module):
         # contains units/layers neurons. This is done to keep the number of
         # state variables projected to the next layer fixed,
         # i.e., the number of trainable parameters does not depend on concat
+        
         if concat or True:
             self.layers_units = int(tot_units / n_layers)
         else:
@@ -330,19 +338,49 @@ class DeepReservoir(torch.nn.Module):
         states = []  # list of all the states in all the layers
         states_last = []  # list of the states in all the layers for the last time step
         # states_last is a list because different layers may have different size.
-
-    
+        count = 0 
+        batch_size, seq_len, _ = X.shape
+        
         if self.cycle:
-            for i, res_layer in enumerate(self.reservoir):
-                [X, h_last] = res_layer(X, None, first_layer=(i == 0))
-                states.append(X)
-                states_last.append(h_last)
+            
+            h_last = torch.zeros(batch_size, self.reservoir[0].net.units).to(X.device)
+            layer_states = [[] for _ in range(len(self.reservoir))]
+            last_layer_hidden = torch.zeros(batch_size, self.layers_units).to(X.device)
+            
+            for t in range(seq_len):
+                
+                xt = X[:, t, :]
+                
+                if h_last is not None:
+                    h_t = h_last.clone()
+                    
+                current_last_hidden = last_layer_hidden.clone()
+                
+                for i, res_layer in enumerate(self.reservoir):
+                    
+                    if i == 0:
+                        count += 1
+                    xt, h_t = res_layer.net(xt,
+                                            h_t,
+                                            first_layer=(i == 0),
+                                            h_last=current_last_hidden
+                    )
+                    layer_states[i].append(h_t)
+
+                    if i == len(self.reservoir) - 1:
+                        # update the last_layer_hidden after processing the final layer
+                        last_layer_hidden = h_t
+    
+            for i in range(len(self.reservoir)):
+                stacked_states = torch.stack(layer_states[i], dim=1)
+                states.append(stacked_states)
+                states_last.append(stacked_states[:, -1, :])
         else:
+            # standard behaviour
             for i, res_layer in enumerate(self.reservoir):
                 [X, h_last] = res_layer(X)
                 states.append(X)
                 states_last.append(h_last)
-            
         
         states_uncat = states
         
@@ -350,5 +388,7 @@ class DeepReservoir(torch.nn.Module):
             states = torch.cat(states, dim=2)
         else:
             states = states[-1]
+        
+        print("Count:", count)
         
         return states, states_last#, states_uncat
