@@ -109,7 +109,7 @@ if args.resultroot is None:
 
 n_inp = 1
 n_out = 1
-washout = 600
+washout = 100
 # TODO this should be set automatically to double of units of the model
 delay = args.delay
 
@@ -198,6 +198,7 @@ var_train, var_test = [], []
 
 for t in range(args.trials):
     if args.esn:
+        units_per_layer = args.n_hid // args.n_layers
         model = DeepReservoir(
             input_size=n_inp,
             tot_units=args.n_hid,
@@ -207,9 +208,9 @@ for t in range(args.trials):
             inter_scaling=args.inp_scaling,
             input_scaling=args.inp_scaling,
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
-            connectivity_recurrent=int(args.n_hid / args.n_layers),
-            connectivity_input=int(args.n_hid / args.n_layers),
-            connectivity_inter=int(args.n_hid / args.n_layers),
+            connectivity_recurrent=units_per_layer,
+            connectivity_input=units_per_layer,
+            connectivity_inter=units_per_layer,
             leaky=args.leaky,
             cycle=args.cycle,
         ).to(device)
@@ -271,40 +272,48 @@ for t in range(args.trials):
     # if hidden states are not concatenated we have to reshape accordingly
     else:
         states_u = states_u.reshape(-1, args.n_hid // args.n_layers)
+    
+    # Instead of training separate models for each delay, prepare data for a single model
+    # that predicts all delays simultaneously
+    
+    # Use the same states for all delays
+    X_all = states_u[delay:num_steps, :]
+    
+    # Create a target matrix with columns for each delay
+    y_all = np.zeros((num_steps - delay, delay))
+    for i in range(1, delay + 1):
+        y_all[:, i-1] = u[delay-i:num_steps-i, 0]
+    
+    # Split into train and test
+    split_idx_train = train_steps - delay
+    split_idx_test = split_idx_train + test_steps
+    
+    X_train, X_test = X_all[:split_idx_train], X_all[split_idx_train:split_idx_test]
+    y_train, y_test = y_all[:split_idx_train], y_all[split_idx_train:split_idx_test]
+    
+    # Add washout
+    X_train, X_test = X_train[washout:], X_test[washout:]
+    y_train, y_test = y_train[washout:], y_test[washout:]
+    
+    # Normalize the data
+    scaler = preprocessing.StandardScaler().fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_test = scaler.transform(X_test)
+    
+    # Train a single classifier that outputs all delays
+    classifier = Ridge(max_iter=1000, alpha=0)
+    classifier.fit(X_train, y_train)
+    
+    y_hat_train = classifier.predict(X_train)
+    y_hat_test = classifier.predict(X_test)
+    
+    # Calculate memory capacity for each delay column
+    for i in range(1, delay + 1):
+        col_idx = i - 1
+        train_memory = square_correlation(y_hat_train[:, col_idx], y_train[:, col_idx])
+        test_memory = square_correlation(y_hat_test[:, col_idx], y_test[:, col_idx])
         
-    for i in tqdm(range(1, delay + 1)):
-             
-        states_i = states_u[i:num_steps, :]
-        target = u[: num_steps - i]
-            
-        split_idx_train = train_steps - i
-        split_idx_test = split_idx_train + test_steps
-        
-        y_train, y_test = target[:split_idx_train], target[split_idx_train:split_idx_test]
-        
-        X_train, X_test = (states_i[:split_idx_train, :], states_i[split_idx_train:split_idx_test, :])
-                                    
-                                
-        # add washout
-        y_train, y_test = y_train[washout:], y_test[washout:]
-        X_train, X_test = X_train[washout:], X_test[washout:]
-        
-        # Normalize the data
-        scaler = preprocessing.StandardScaler().fit(X_train)
-        X_train = scaler.transform(X_train)
-        X_test = scaler.transform(X_test)
-        
-        # Train a classifier
-        classifier = Ridge(max_iter=1000, alpha=0)
-        classifier.fit(X_train, y_train)
-        
-        y_hat = classifier.predict(X_train)
-        y_hat_test = classifier.predict(X_test)
-        
-        train_memory = square_correlation(y_hat, y_train)
-        test_memory = square_correlation(y_hat_test, y_test)
-        
-        # handle if larger than 1 with an error
+        # Handle if larger than 1 with an error
         if train_memory > 1:
             raise ValueError("Train memory is larger than 1")
         if test_memory > 1:
@@ -316,24 +325,22 @@ for t in range(args.trials):
         train_memory_dict[i].append(train_memory)
         test_memory_dict[i].append(test_memory)
         
-        
         print(
-            f"Trial {t}, delay {i+1}/{delay}, "  
+            f"Trial {t}, delay {i}/{delay}, "  
             f"train memory: {round(train_memory, 2)}, "
             f"test memory: {round(test_memory, 2)}, "
             # print current total memory
             "\n",
             f"total train memory: {round(total_train_memory, 2)}, "
             f"total test memory: {round(total_test_memory, 2)}",
-            #f"total valid memory: {round(total_val_memory, 2)}",
             f"\n"
         )
-    # these is the variance between the trials
-    var_test.append(total_test_memory)
-    var_train.append(total_train_memory)
-    #reset total_test_memory
-    total_test_memory = 0
-    total_train_memory = 0
+# these is the variance between the trials
+var_test.append(total_test_memory)
+var_train.append(total_train_memory)
+#reset total_test_memory
+total_test_memory = 0
+total_train_memory = 0
     
 if args.ron:
     f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_RON_{args.topology}{args.resultsuffix}.txt"), "a")
