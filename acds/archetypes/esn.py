@@ -100,13 +100,17 @@ class ReservoirCell(torch.nn.Module):
 
         if self.cycle:
             # between -1 and 1
-            self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
+            #self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
+            
+            #self.projection_kernel = nn.Parameter(projection, requires_grad=False)
             #init like recurrent
-            #self.projection_kernel = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
+            self.projection_kernel = torch.eye(self.units) * self.spectral_radius
+            self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+            
+            #self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
             #self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
             # use same as sparse_recurrent_tensor_init
-
-            self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+            #self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
     
         # uniform init in [-1, +1] times input_scaling
         self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
@@ -123,7 +127,8 @@ class ReservoirCell(torch.nn.Module):
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
         """     
-    
+        linear = True 
+         
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         # check if first layer
@@ -133,9 +138,15 @@ class ReservoirCell(torch.nn.Module):
             # init h_last
             h_to_project = h_last
             last_hidden_part = torch.mm(h_to_project, self.projection_kernel.to(dtype=xt.dtype))
-            output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype))
+            if linear:
+                output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype)
+            else:
+                output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype))
         else:
-            output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
+            if linear:
+                output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
+            else:    
+                output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
 
         leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
         return leaky_output, leaky_output
@@ -338,43 +349,34 @@ class DeepReservoir(torch.nn.Module):
         states = []  # list of all the states in all the layers
         states_last = []  # list of the states in all the layers for the last time step
         # states_last is a list because different layers may have different size.
-        count = 0 
         batch_size, seq_len, _ = X.shape
         
         if self.cycle:
-            
+            batch_size, seq_len, _ = X.shape
             h_last = torch.zeros(batch_size, self.reservoir[0].net.units).to(X.device)
-            layer_states = [[] for _ in range(len(self.reservoir))]
             last_layer_hidden = torch.zeros(batch_size, self.layers_units).to(X.device)
-            
+            layer_states = [[] for _ in range(len(self.reservoir))]
             for t in range(seq_len):
-                
                 xt = X[:, t, :]
-                
-                if h_last is not None:
-                    h_t = h_last.clone()
-                    
+                # Save last_layer_hidden from previous timestep for feedback
                 current_last_hidden = last_layer_hidden.clone()
-                
+                # previous state for first layer
+                h_t = h_last  
                 for i, res_layer in enumerate(self.reservoir):
-                    
                     if i == 0:
-                        count += 1
-                    xt, h_t = res_layer.net(xt,
-                                            h_t,
-                                            first_layer=(i == 0),
-                                            h_last=current_last_hidden
-                    )
+                        xt, h_t = res_layer.net(xt, h_t, first_layer=True, h_last=current_last_hidden)
+                    else:
+                        xt, h_t = res_layer.net(xt, h_t, first_layer=False)
                     layer_states[i].append(h_t)
-
                     if i == len(self.reservoir) - 1:
-                        # update the last_layer_hidden after processing the final layer
-                        last_layer_hidden = h_t
-    
+                        # update for next timestep
+                        last_layer_hidden = h_t  
+                # update for next timestep
+                h_last = h_t  
             for i in range(len(self.reservoir)):
                 stacked_states = torch.stack(layer_states[i], dim=1)
                 states.append(stacked_states)
-                states_last.append(stacked_states[:, -1, :])
+                states_last.append(stacked_states[:, -1, :]) 
         else:
             # standard behaviour
             for i, res_layer in enumerate(self.reservoir):
@@ -382,13 +384,11 @@ class DeepReservoir(torch.nn.Module):
                 states.append(X)
                 states_last.append(h_last)
         
-        states_uncat = states
+            states_uncat = states
         
         if self.concat:
             states = torch.cat(states, dim=2)
         else:
             states = states[-1]
-        
-        print("Count:", count)
-        
+            
         return states, states_last#, states_uncat

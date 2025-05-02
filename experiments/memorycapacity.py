@@ -301,11 +301,16 @@ for t in range(args.trials):
     X_test = scaler.transform(X_test)
     
     # Train a single classifier that outputs all delays
-    classifier = Ridge(max_iter=1000, alpha=0)
-    classifier.fit(X_train, y_train)
+    #classifier = Ridge(max_iter=1000, alpha=0)
+    #classifier.fit(X_train, y_train)
+    # use pseudo inverse
+    classifier = np.linalg.pinv(X_train) @ y_train
     
-    y_hat_train = classifier.predict(X_train)
-    y_hat_test = classifier.predict(X_test)
+    y_hat_train = X_train @ classifier
+    y_hat_test = X_test @ classifier
+    
+    #y_hat_train = classifier.predict(X_train)
+    #y_hat_test = classifier.predict(X_test)
     
     # Calculate memory capacity for each delay column
     for i in range(1, delay + 1):

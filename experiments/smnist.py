@@ -66,6 +66,7 @@ parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
 )
+parser.add_argument("--n_layers", type=int, default=1, help="Number of layers in the network")
 parser.add_argument(
     "--topology",
     type=str,
@@ -119,6 +120,7 @@ device = (
     if torch.cuda.is_available() and not args.cpu
     else torch.device("cpu")
 )
+print("Using device:", device)
 
 n_inp = 1
 n_out = 10
@@ -132,14 +134,18 @@ epsilon = (
 train_accs, valid_accs, test_accs = [], [], []
 for i in range(args.trials):
     if args.esn:
+        units_per_layer = args.n_hid // args.n_layers
         model = DeepReservoir(
-            n_inp,
+            input_size=n_inp,
             tot_units=args.n_hid,
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
-            connectivity_recurrent=int((1 - args.sparsity) * args.n_hid),
-            connectivity_input=args.n_hid,
+            inter_scaling=args.inp_scaling,
+            connectivity_recurrent=units_per_layer,
+            connectivity_input=units_per_layer,
+            connectivity_inter=units_per_layer,
             leaky=args.leaky,
+            cycle=True,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(

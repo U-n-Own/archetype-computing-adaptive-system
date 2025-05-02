@@ -40,7 +40,6 @@ parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--esn", action="store_true")
 parser.add_argument("--ron", action="store_true")
 parser.add_argument("--deepron", action="store_true")
-
 parser.add_argument("--batch", type=int, default=4)
 parser.add_argument("--n_hid", type=int, default=100)
 parser.add_argument("--dt", type=float, default=0.0075)
@@ -123,8 +122,8 @@ def train_adiac(config):
             dt=config["dt"],
             gamma=gamma,
             epsilon=epsilon,
-            input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            input_scaling=config["input_scaling"],
+            inter_scaling=config["inter_scaling"],
             reservoir_scaler=args.inp_scaling,
             connectivity_input=int(args.n_hid / config["n_layers"]),
             connectivity_inter=int(args.n_hid / config["n_layers"]),
@@ -204,12 +203,14 @@ def run_hyperparameter_search():
     search_space = {
         "gamma": tune.uniform(0, 1.5),
         "epsilon": tune.uniform(2, 4),
-        "dt": tune.uniform(0.0003, 0.5),
+        "dt": tune.loguniform(1e-4, 1),
         "rho": tune.uniform(5, 10),
         "alpha": tune.uniform(1e-9, 1e-9),
         "gamma_range": tune.uniform(1, 2),
         "epsilon_range": tune.uniform(0.1, 0.1),
         "n_layers": tune.uniform(args.n_layers, args.n_layers),
+        "input_scaling": tune.uniform(0.1, 10),
+        "inter_scaling": tune.uniform(0.1, 10),
         #"inter_scaling": tune.uniform(0.1, 0.2),
     }
 
@@ -232,7 +233,7 @@ def run_hyperparameter_search():
         tune_config=tune.TuneConfig(
             # if bayesopt is None do random search
             search_alg=[bayesopt] if bayesopt is not None else None,
-            num_samples=50,  # Number of trials
+            num_samples=150,  # Number of trials
         ),
         param_space=search_space,
     )

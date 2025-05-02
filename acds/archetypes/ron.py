@@ -126,7 +126,8 @@ class RandomizedOscillatorsNetwork(nn.Module):
         self.bias = nn.Parameter(bias, requires_grad=False)
 
     def cell(
-        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor, first_layer: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor, first_layer: bool = False, h_last=None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute the next hidden state and its derivative.
 
         Args:
@@ -140,15 +141,15 @@ class RandomizedOscillatorsNetwork(nn.Module):
         
         last_hidden_part = 0
         
-        if first_layer and self.cycle:
+        if first_layer and self.cycle and h_last is not None:
             # take previous last hidden state and add it to the input
-            last_hidden_part = torch.mm(hy, self.l2x.to(dtype=x.dtype))
+            last_hidden_part = torch.matmul(h_last, self.l2x.to(dtype=x.dtype))
+            
         
         
         hz = hz + self.dt * (
             torch.tanh(
-                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype) - self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype)
-            + last_hidden_part)
+                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype) + (last_hidden_part) - self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype))
             - self.gamma * hy
             - self.epsilon * hz
         )
@@ -156,7 +157,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         hy = hy + self.dt * hz
         return hy, hz
 
-    def forward(self, x: torch.Tensor, first_layer=False) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, first_layer=False, h_last=None) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Forward pass on a given input time-series.
 
         Args:
@@ -170,7 +171,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         hz = torch.zeros(x.size(0), self.n_hid).to(self.device)
         all_states = []
         for t in range(x.size(1)):
-            hy, hz = self.cell(x[:, t], hy, hz, first_layer)
+            hy, hz = self.cell(x[:, t], hy, hz, first_layer, h_last=h_last)
             all_states.append(hy)
 
         return torch.stack(all_states, dim=1), [
@@ -309,11 +310,17 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         # list to store the hidden states of each layer
         states = []
        
-        if self.cycle: 
+        if self.cycle:
+            last_layer_hidden = None 
             for i, ron_layer in enumerate(self.ron_reservoir):
-                [hy, last_state] = ron_layer(hy, first_layer=(i == 0))
+                h_last_to_pass = last_layer_hidden if i == 0 else None
+                [hy, last_state] = ron_layer(hy, first_layer=(i == 0), h_last=h_last_to_pass)
                 states.append(hy)
                 layer_states.append(last_state[0])
+                
+                # update last hidden layer to
+                if i == len(self.ron_reservoir) - 1:
+                    last_layer_hidden = hy
         else:
             for i, ron_layer in enumerate(self.ron_reservoir):
                 [hy, last_state] = ron_layer(hy)
