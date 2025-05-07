@@ -325,7 +325,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             for i, ron_layer in enumerate(self.ron_reservoir):
                 [hy, last_state] = ron_layer(hy)
                 states.append(hy)
-                layer_states.append(last_state[0])
+                layer_states.append(last_state)
             
         states_uncat = states
         
