@@ -57,6 +57,10 @@ def sparse_tensor_init(M: int, N: int, C: int = 1) -> torch.FloatTensor:
         torch.FloatTensor: MxN dense matrix
     """
     dense_shape = torch.Size([M, N])  # shape of the dense version of the matrix
+    
+    # Ensure C doesn't exceed N
+    C = min(C, N)
+    
     indices = torch.zeros((M * C, 2), dtype=torch.long)
     k = 0
     for i in range(M):
@@ -84,7 +88,9 @@ def sparse_recurrent_tensor_init(M: int, C: int = 1) -> torch.FloatTensor:
     Returns:
         torch.FloatTensor: MxM dense matrix
     """
-    assert M >= C
+    # Ensure C doesn't exceed M
+    C = min(C, M)
+    
     dense_shape = torch.Size([M, M])  # the shape of the dense version of the matrix
     indices = torch.zeros((M * C, 2), dtype=torch.long)
     k = 0

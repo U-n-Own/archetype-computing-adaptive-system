@@ -127,7 +127,7 @@ class ReservoirCell(torch.nn.Module):
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
         """     
-        linear = True 
+        linear = False
          
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
