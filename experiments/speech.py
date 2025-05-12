@@ -64,6 +64,7 @@ parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
 )
+parser.add_argument("--ron_leaky", action="store_true", help="Use leaky integration in the RON")
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers in the network")
 parser.add_argument("--cycle", action="store_true", help="Use cycle in the network")
 parser.add_argument(
@@ -150,7 +151,7 @@ def load_speech_data(dataroot: str):
     # Split into train and test sets
     np.random.seed(42)
     indices = np.random.permutation(combined_data.shape[0])
-    train_size = int(combined_data.shape[0] * 0.7)  # 70% train
+    train_size = int(combined_data.shape[0] * 0.8)  # 80% train
     test_size = combined_data.shape[0] - train_size
     
     X_train = combined_data[indices[:train_size]]
@@ -172,12 +173,41 @@ def test(model, X_data, y_data, scaler, classifier, use_last_state=False, batch_
         batch_X = X_tensor[i:i+batch_size].to(device)
         output = model(batch_X)
         
+        # Debug information about output
+        if i == 0:
+            print(f"DEBUG - Output type: {type(output)}")
+            if isinstance(output, tuple):
+                print(f"DEBUG - Output[0] shape: {output[0].shape}")
+                print(f"DEBUG - Output[1] type: {type(output[1])}")
+                if isinstance(output[1], list) or isinstance(output[1], tuple):
+                    print(f"DEBUG - Output[1] length: {len(output[1])}")
+                    for j, item in enumerate(output[1]):
+                        print(f"DEBUG - Output[1][{j}] shape: {item.shape if hasattr(item, 'shape') else 'no shape'}")
+                else:
+                    print(f"DEBUG - Output[1] shape: {output[1].shape if hasattr(output[1], 'shape') else 'no shape'}")
+            else:
+                print(f"DEBUG - Output shape: {output.shape}")
+        
         if isinstance(output, tuple):
             states = output[0]
             last_hidden = output[1]
         else:
             states = output
             last_hidden = states[:, -1, :]
+        
+        # Debug information about states and last_hidden
+        if i == 0:
+            print(f"DEBUG - States shape: {states.shape}")
+            print(f"DEBUG - States min/max/mean/std: {states.min().item():.4f}/{states.max().item():.4f}/{states.mean().item():.4f}/{states.std().item():.4f}")
+            
+            print(f"DEBUG - Last hidden type: {type(last_hidden)}")
+            if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
+                print(f"DEBUG - Last hidden length: {len(last_hidden)}")
+                print(f"DEBUG - Last hidden[-1] shape: {last_hidden[-1].shape if hasattr(last_hidden[-1], 'shape') else 'no shape'}")
+                print(f"DEBUG - Last hidden[-1] stats: {last_hidden[-1].min().item():.4f}/{last_hidden[-1].max().item():.4f}/{last_hidden[-1].mean().item():.4f}/{last_hidden[-1].std().item():.4f}")
+            else:
+                print(f"DEBUG - Last hidden shape: {last_hidden.shape}")
+                print(f"DEBUG - Last hidden stats: {last_hidden.min().item():.4f}/{last_hidden.max().item():.4f}/{last_hidden.mean().item():.4f}/{last_hidden.std().item():.4f}")
         
         if use_last_state:
             if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
@@ -190,7 +220,15 @@ def test(model, X_data, y_data, scaler, classifier, use_last_state=False, batch_
             activations.append(pooled_states)
     
     activations = np.concatenate(activations, axis=0)
+    
+    # Debug information about activations
+    print(f"DEBUG - Activations shape: {activations.shape}")
+    print(f"DEBUG - Activations min/max/mean/std: {np.min(activations):.4f}/{np.max(activations):.4f}/{np.mean(activations):.4f}/{np.std(activations):.4f}")
+    
     activations = scaler.transform(activations)
+    
+    # Debug information about scaled activations
+    print(f"DEBUG - Scaled activations min/max/mean/std: {np.min(activations):.4f}/{np.max(activations):.4f}/{np.mean(activations):.4f}/{np.std(activations):.4f}")
     
     return classifier.score(activations, y_data)
 
@@ -210,11 +248,15 @@ n_out = len(class_names)  # Number of classes
 print(f"Loaded data: {X_train.shape[0]} training samples, {X_test.shape[0]} test samples")
 print(f"Input dimension: {n_inp}, Number of classes: {n_out}")
 
-gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
-epsilon = (
-    args.epsilon - args.epsilon_range / 2.0,
-    args.epsilon + args.epsilon_range / 2.0,
-)
+if args.ron_leaky:
+    epsilon = 1/args.dt
+    gamma = 1
+else:
+    gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
+    epsilon = (
+        args.epsilon - args.epsilon_range / 2.0,
+        args.epsilon + args.epsilon_range / 2.0,
+    )
 
 train_accs, test_accs = [], []
 for i in range(args.trials):
@@ -238,20 +280,20 @@ for i in range(args.trials):
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.diffusive_gamma,
-            args.rho,
-            args.inp_scaling,
+            n_inp=n_inp,
+            n_hid=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            diffusive_gamma=args.diffusive_gamma,
+            rho=args.rho,
+            input_scaling=args.inp_scaling,
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
             device=device,
             cycle=args.cycle,
-            concat=args.concat,
+            #concat=args.concat,
         ).to(device)
     elif args.deepron:
         model = DeepRandomizedOscillatorsNetwork(
@@ -270,7 +312,21 @@ for i in range(args.trials):
 
     model.eval()  # Set model to evaluation mode
     
-    
+    # After model creation:
+    if args.ron:
+        print(f"RON Parameters - dt: {args.dt}, gamma: {gamma}, epsilon: {epsilon}")
+        # Add parameter validation
+        if isinstance(gamma, tuple) and (gamma[0] <= 0 or gamma[1] <= 0):
+            print("WARNING: Gamma values should be positive for stability")
+        if isinstance(epsilon, tuple) and (epsilon[0] <= 0 or epsilon[1] <= 0):
+            print("WARNING: Epsilon values should be positive for stability")
+    elif args.deepron:
+        print(f"DeepRON Parameters - dt: {args.dt}, gamma: {gamma}, epsilon: {epsilon}, n_layers: {args.n_layers}")
+        if isinstance(gamma, tuple) and (gamma[0] <= 0 or gamma[1] <= 0):
+            print("WARNING: Gamma values should be positive for stability")
+        if isinstance(epsilon, tuple) and (epsilon[0] <= 0 or epsilon[1] <= 0):
+            print("WARNING: Epsilon values should be positive for stability")
+            
     # Process training data
     print("Processing training data...")
     activations = []
@@ -281,6 +337,21 @@ for i in range(args.trials):
     for j in tqdm(range(0, X_train.shape[0], batch_size), desc="Processing train data"):
         batch_X = X_train_tensor[j:j+batch_size].to(device)
         output = model(batch_X)
+        
+        # Debug the first batch output
+        if j == 0:
+            print(f"DEBUG - Training output type: {type(output)}")
+            if isinstance(output, tuple):
+                print(f"DEBUG - Training output[0] shape: {output[0].shape}")
+                print(f"DEBUG - Training output[1] type: {type(output[1])}")
+                if isinstance(output[1], list) or isinstance(output[1], tuple):
+                    print(f"DEBUG - Training output[1] length: {len(output[1])}")
+                    for k, item in enumerate(output[1]):
+                        print(f"DEBUG - Training output[1][{k}] shape: {item.shape if hasattr(item, 'shape') else 'no shape'}")
+                else:
+                    print(f"DEBUG - Training output[1] shape: {output[1].shape if hasattr(output[1], 'shape') else 'no shape'}")
+            else:
+                print(f"DEBUG - Training output shape: {output.shape}")
                 
         if isinstance(output, tuple):
             states = output[0]

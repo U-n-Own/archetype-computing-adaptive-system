@@ -106,8 +106,8 @@ def train_adiac(config):
             inter_scaling=args.inp_scaling,
             leaky=args.leaky,
             concat=True,
-            connectivity_input=int(args.n_hid / config["n_layers"]),
-            connectivity_inter=int(args.n_hid / config["n_layers"]),
+            connectivity_input=args.n_hid,
+            #connectivity_inter=int(args.n_hid / config["n_layers"]),
             connectivity_recurrent=int(args.n_hid / config["n_layers"]),
             cycle=args.cycle,
         )
@@ -201,16 +201,17 @@ def run_hyperparameter_search():
     # Bayesian optimization search 
     
     search_space = {
-        "gamma": tune.uniform(0, 1.5),
-        "epsilon": tune.uniform(2, 4),
-        "dt": tune.loguniform(1e-4, 1),
-        "rho": tune.uniform(5, 10),
-        "alpha": tune.uniform(1e-9, 1e-9),
-        "gamma_range": tune.uniform(1, 2),
-        "epsilon_range": tune.uniform(0.1, 0.1),
+        #"gamma": tune.uniform(0, 1.5),
+        #"epsilon": tune.uniform(2, 4),
+        #"dt": tune.loguniform(1e-4, 1),
+        "rho": tune.uniform(0.99, 0.999),
+        #"alpha": tune.uniform(1e-9, 1e-9),
+        #"gamma_range": tune.uniform(1, 2),
+        #"epsilon_range": tune.uniform(0.1, 0.1),
         "n_layers": tune.uniform(args.n_layers, args.n_layers),
-        "input_scaling": tune.uniform(0.1, 10),
-        "inter_scaling": tune.uniform(0.1, 10),
+        "input_scaling": tune.uniform(50, 50),
+        "inter_scaling": tune.uniform(50, 50),
+        "leaky": tune.loguniform(0.0001, 0.0001)
         #"inter_scaling": tune.uniform(0.1, 0.2),
     }
 
