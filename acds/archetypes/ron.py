@@ -266,8 +266,11 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     dt=dt,
                                     gamma=gamma,
                                     epsilon=epsilon,
+                                    topology=topology, # Pass topology
+                                    sparsity=sparsity, # Pass sparsity
                                     reservoir_scaler=self.reservoir_scaler,
                                     cycle=self.cycle,
+                                    device=device, # Pass device
                                     #TODO still sparse connectivity to implement
                                     #connectivity_input=connectivity_input_1,
                                     #connectivity_recurrent=connectivity_input_others,
@@ -286,11 +289,14 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     dt= dt,
                     gamma=gamma,
                     epsilon=epsilon,
+                    topology=topology, # Pass topology
+                    sparsity=sparsity, # Pass sparsity
+                    reservoir_scaler=reservoir_scaler, # Pass reservoir_scaler
                     cycle=self.cycle,
+                    device=device, # Pass device
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
                 )
-                # save for each layer the dt used for layers random
             )
             last_h_size = self.layer_units
         self.ron_reservoir = nn.ModuleList(deepron_layers)

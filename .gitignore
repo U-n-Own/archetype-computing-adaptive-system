@@ -2,6 +2,9 @@
 MNIST/
 thesis_venv/
 wandb/
+speech/
+*.png
+*.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
