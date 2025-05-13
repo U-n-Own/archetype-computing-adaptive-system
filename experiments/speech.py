@@ -14,7 +14,7 @@ from acds.archetypes import (
     DeepRandomizedOscillatorsNetwork,
 )
 
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 parser = argparse.ArgumentParser(description="training parameters")
 parser.add_argument("--dataroot", type=str, help="Path to the directory containing speech data .npy files")
@@ -40,13 +40,13 @@ parser.add_argument(
 parser.add_argument(
     "--gamma_range",
     type=float,
-    default=2.7,
+    default=0,
     help="y controle parameter <gamma> of the coRNN",
 )
 parser.add_argument(
     "--epsilon_range",
     type=float,
-    default=4.7,
+    default=0,
     help="z controle parameter <epsilon> of the coRNN",
 )
 parser.add_argument("--cpu", action="store_true")
@@ -159,6 +159,21 @@ def load_speech_data(dataroot: str):
     X_test = combined_data[indices[train_size:]]
     y_test = combined_labels[indices[train_size:]]
     
+    # Normalize input features
+    # Reshape data for scaler: (samples * time_steps, features)
+    X_train_reshaped = X_train.reshape(-1, X_train.shape[-1])
+    X_test_reshaped = X_test.reshape(-1, X_test.shape[-1])
+    
+    input_feature_scaler = preprocessing.StandardScaler()
+    X_train_scaled_reshaped = input_feature_scaler.fit_transform(X_train_reshaped)
+    X_test_scaled_reshaped = input_feature_scaler.transform(X_test_reshaped)
+    
+    # Reshape back to original: (samples, time_steps, features)
+    X_train = X_train_scaled_reshaped.reshape(X_train.shape)
+    X_test = X_test_scaled_reshaped.reshape(X_test.shape)
+    
+    print("Input features normalized.")
+    
     return X_train, y_train, X_test, y_test, class_names
 
 
@@ -173,41 +188,12 @@ def test(model, X_data, y_data, scaler, classifier, use_last_state=False, batch_
         batch_X = X_tensor[i:i+batch_size].to(device)
         output = model(batch_X)
         
-        # Debug information about output
-        if i == 0:
-            print(f"DEBUG - Output type: {type(output)}")
-            if isinstance(output, tuple):
-                print(f"DEBUG - Output[0] shape: {output[0].shape}")
-                print(f"DEBUG - Output[1] type: {type(output[1])}")
-                if isinstance(output[1], list) or isinstance(output[1], tuple):
-                    print(f"DEBUG - Output[1] length: {len(output[1])}")
-                    for j, item in enumerate(output[1]):
-                        print(f"DEBUG - Output[1][{j}] shape: {item.shape if hasattr(item, 'shape') else 'no shape'}")
-                else:
-                    print(f"DEBUG - Output[1] shape: {output[1].shape if hasattr(output[1], 'shape') else 'no shape'}")
-            else:
-                print(f"DEBUG - Output shape: {output.shape}")
-        
         if isinstance(output, tuple):
             states = output[0]
             last_hidden = output[1]
         else:
             states = output
             last_hidden = states[:, -1, :]
-        
-        # Debug information about states and last_hidden
-        if i == 0:
-            print(f"DEBUG - States shape: {states.shape}")
-            print(f"DEBUG - States min/max/mean/std: {states.min().item():.4f}/{states.max().item():.4f}/{states.mean().item():.4f}/{states.std().item():.4f}")
-            
-            print(f"DEBUG - Last hidden type: {type(last_hidden)}")
-            if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
-                print(f"DEBUG - Last hidden length: {len(last_hidden)}")
-                print(f"DEBUG - Last hidden[-1] shape: {last_hidden[-1].shape if hasattr(last_hidden[-1], 'shape') else 'no shape'}")
-                print(f"DEBUG - Last hidden[-1] stats: {last_hidden[-1].min().item():.4f}/{last_hidden[-1].max().item():.4f}/{last_hidden[-1].mean().item():.4f}/{last_hidden[-1].std().item():.4f}")
-            else:
-                print(f"DEBUG - Last hidden shape: {last_hidden.shape}")
-                print(f"DEBUG - Last hidden stats: {last_hidden.min().item():.4f}/{last_hidden.max().item():.4f}/{last_hidden.mean().item():.4f}/{last_hidden.std().item():.4f}")
         
         if use_last_state:
             if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
@@ -221,14 +207,7 @@ def test(model, X_data, y_data, scaler, classifier, use_last_state=False, batch_
     
     activations = np.concatenate(activations, axis=0)
     
-    # Debug information about activations
-    print(f"DEBUG - Activations shape: {activations.shape}")
-    print(f"DEBUG - Activations min/max/mean/std: {np.min(activations):.4f}/{np.max(activations):.4f}/{np.mean(activations):.4f}/{np.std(activations):.4f}")
-    
     activations = scaler.transform(activations)
-    
-    # Debug information about scaled activations
-    print(f"DEBUG - Scaled activations min/max/mean/std: {np.min(activations):.4f}/{np.max(activations):.4f}/{np.mean(activations):.4f}/{np.std(activations):.4f}")
     
     return classifier.score(activations, y_data)
 
@@ -249,8 +228,12 @@ print(f"Loaded data: {X_train.shape[0]} training samples, {X_test.shape[0]} test
 print(f"Input dimension: {n_inp}, Number of classes: {n_out}")
 
 if args.ron_leaky:
-    epsilon = 1/args.dt
-    gamma = 1
+    if args.leaky <= 0:
+        raise ValueError("args.leaky must be positive when using --ron_leaky for RON.")
+    gamma = 1.0
+    tau = args.leaky**0.5
+    epsilon = 1.0 / tau
+    print(f"RON as Leaky ESN mode: gamma={gamma}, epsilon={epsilon:.4f} (derived from args.leaky={args.leaky}, tau={tau:.4f})")
 else:
     gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
     epsilon = (
@@ -296,6 +279,7 @@ for i in range(args.trials):
             #concat=args.concat,
         ).to(device)
     elif args.deepron:
+        units_per_layer = args.n_hid // args.n_layers
         model = DeepRandomizedOscillatorsNetwork(
             n_inp=n_inp,
             total_units=args.n_hid,
@@ -303,88 +287,76 @@ for i in range(args.trials):
             gamma=gamma,
             epsilon=epsilon,
             n_layers=args.n_layers,
+            diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
+            inter_scaling=args.inp_scaling,
             topology=args.topology,
+            concat=args.concat,          
+            connectivity_input=int((1-args.sparsity *n_inp)),  
+            connectivity_inter=int(args.n_hid / args.n_layers),
+            reservoir_scaler=0,  # Use args.reservoir_scaler
+            device=device,
+            cycle=args.cycle,  # Add cycle parameter
         ).to(device)
     else:
         raise ValueError("No model type specified. Please use --esn, --ron, --pron, --mspron, or --deepron.")
 
     model.eval()  # Set model to evaluation mode
     
-    # After model creation:
-    if args.ron:
-        print(f"RON Parameters - dt: {args.dt}, gamma: {gamma}, epsilon: {epsilon}")
-        # Add parameter validation
-        if isinstance(gamma, tuple) and (gamma[0] <= 0 or gamma[1] <= 0):
-            print("WARNING: Gamma values should be positive for stability")
-        if isinstance(epsilon, tuple) and (epsilon[0] <= 0 or epsilon[1] <= 0):
-            print("WARNING: Epsilon values should be positive for stability")
-    elif args.deepron:
-        print(f"DeepRON Parameters - dt: {args.dt}, gamma: {gamma}, epsilon: {epsilon}, n_layers: {args.n_layers}")
-        if isinstance(gamma, tuple) and (gamma[0] <= 0 or gamma[1] <= 0):
-            print("WARNING: Gamma values should be positive for stability")
-        if isinstance(epsilon, tuple) and (epsilon[0] <= 0 or epsilon[1] <= 0):
-            print("WARNING: Epsilon values should be positive for stability")
-            
-    # Process training data
-    print("Processing training data...")
-    activations = []
-
-    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    batch_size = args.batch
-    
-    for j in tqdm(range(0, X_train.shape[0], batch_size), desc="Processing train data"):
-        batch_X = X_train_tensor[j:j+batch_size].to(device)
-        output = model(batch_X)
+    # check parameters of deepron
+    # print parameters
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
         
-        # Debug the first batch output
-        if j == 0:
-            print(f"DEBUG - Training output type: {type(output)}")
-            if isinstance(output, tuple):
-                print(f"DEBUG - Training output[0] shape: {output[0].shape}")
-                print(f"DEBUG - Training output[1] type: {type(output[1])}")
-                if isinstance(output[1], list) or isinstance(output[1], tuple):
-                    print(f"DEBUG - Training output[1] length: {len(output[1])}")
-                    for k, item in enumerate(output[1]):
-                        print(f"DEBUG - Training output[1][{k}] shape: {item.shape if hasattr(item, 'shape') else 'no shape'}")
-                else:
-                    print(f"DEBUG - Training output[1] shape: {output[1].shape if hasattr(output[1], 'shape') else 'no shape'}")
-            else:
-                print(f"DEBUG - Training output shape: {output.shape}")
-                
-        if isinstance(output, tuple):
-            states = output[0]
-            last_hidden = output[1]
+    # Process training data to get activations
+    print("Processing training data...")
+    activations_list = [] # Renamed to avoid conflict if 'activations' is used later before this scope ends
+
+    # Ensure X_train is a tensor for batching
+    if not isinstance(X_train, torch.Tensor):
+        X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    else:
+        X_train_tensor = X_train
+        
+    current_batch_size = args.batch # Use a local variable for batch_size for clarity
+    
+    for j in tqdm(range(0, X_train_tensor.shape[0], current_batch_size), desc="Processing train data batches"):
+        batch_X = X_train_tensor[j:j+current_batch_size].to(device)
+        
+        output_from_model = model(batch_X)
+        
+        sequence_states_tensor: torch.Tensor
+        final_hidden_states: Union[torch.Tensor, List[torch.Tensor], Tuple[torch.Tensor, ...]]
+
+        if isinstance(output_from_model, tuple):
+            sequence_states_tensor = output_from_model[0]
+            final_hidden_states = output_from_model[1]
         else:
-            states = output
-            last_hidden = states[:, -1, :]
+            sequence_states_tensor = output_from_model
+            final_hidden_states = sequence_states_tensor[:, -1, :] 
         
         if args.use_last_state:
-            if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
-                final_state = last_hidden[-1].cpu().numpy()
+            current_batch_final_states_tensor: torch.Tensor
+            if isinstance(final_hidden_states, (list, tuple)):
+                current_batch_final_states_tensor = final_hidden_states[-1]
             else:
-                final_state = last_hidden.cpu().numpy()
-            activations.append(final_state)
+                current_batch_final_states_tensor = final_hidden_states
+            activations_list.append(current_batch_final_states_tensor.cpu().numpy())
         else:
-            pooled_states = states.mean(dim=1).cpu().numpy()
-            activations.append(pooled_states)
+            pooled_states_tensor = sequence_states_tensor.mean(dim=1)
+            activations_list.append(pooled_states_tensor.cpu().numpy())
     
-    activations = np.concatenate(activations, axis=0)
+    concatenated_activations = np.concatenate(activations_list, axis=0)
     
-    # Scale data and train classifier
+    # Scale data and train the classifier
     print("Fitting scaler...")
-    scaler = preprocessing.StandardScaler().fit(activations)
-    activations = scaler.transform(activations)
+    scaler = preprocessing.StandardScaler().fit(concatenated_activations)
+    scaled_activations = scaler.transform(concatenated_activations) # Use a new variable for clarity
+    
     print("Training logistic regression classifier...")
+    classifier = LogisticRegression(max_iter=10000)
+    classifier.fit(scaled_activations, y_train)
     
-    #classifier = RidgeClassifier(max_iter=1000, alpha=1e-7)
-    classifier = LogisticRegression(max_iter=10000, penalty='l2')
-    classifier.fit(activations, y_train)
-    
-    
-     
-    # Evaluate
     print("Evaluating on training set...")
     train_acc = test(model, X_train, y_train, scaler, classifier, args.use_last_state, args.batch)
     print("Evaluating on test set...")

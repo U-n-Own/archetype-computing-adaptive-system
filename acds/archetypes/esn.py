@@ -100,17 +100,17 @@ class ReservoirCell(torch.nn.Module):
 
         if self.cycle:
             # between -1 and 1
-            #self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling        
+            self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling         
             
             #self.projection_kernel = nn.Parameter(projection, requires_grad=False)
             #init like recurrent
-            self.projection_kernel = torch.eye(self.units) * self.spectral_radius
-            self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+            #self.projection_kernel = torch.eye(self.units) * 0.2
+            #self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
             
             #self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
             #self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
             # use same as sparse_recurrent_tensor_init
-            #self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+            self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
     
         # uniform init in [-1, +1] times input_scaling
         self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
@@ -358,16 +358,19 @@ class DeepReservoir(torch.nn.Module):
             layer_states = [[] for _ in range(len(self.reservoir))]
             for t in range(seq_len):
                 xt = X[:, t, :]
-                # Save last_layer_hidden from previous timestep for feedback
+                # Save last_layer_hidden from previous timestep for feedback:  y_k^(L)
                 current_last_hidden = last_layer_hidden.clone()
-                # previous state for first layer
+                # previous state for first layer: y_k^(1)
                 h_t = h_last  
                 for i, res_layer in enumerate(self.reservoir):
                     if i == 0:
+                        # first layer : getting projection y_k^(L)
                         xt, h_t = res_layer.net(xt, h_t, first_layer=True, h_last=current_last_hidden)
                     else:
                         xt, h_t = res_layer.net(xt, h_t, first_layer=False)
+                    # for each layer and timestep, save the state
                     layer_states[i].append(h_t)
+                    
                     if i == len(self.reservoir) - 1:
                         # update for next timestep
                         last_layer_hidden = h_t  
