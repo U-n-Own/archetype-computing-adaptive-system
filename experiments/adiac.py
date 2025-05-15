@@ -7,6 +7,8 @@ import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
+import random
+from experiments.utils import set_seed
 
 from acds.archetypes import (
     DeepReservoir,
@@ -89,6 +91,10 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+# Set random seed for reproducibility (match adiac_search_ray.py and utils.py)
+SEED = 42
+set_seed(SEED)
+
 assert args.dataroot is not None, "No dataroot provided."
 if args.resultroot is None:
     warnings.warn("No resultroot provided. Using current location as default.")
@@ -112,6 +118,8 @@ def test(data_loader, classifier, scaler):
     for x, y in tqdm(data_loader):
         x = x.to(device)
         output = model(x)[-1][0]
+        if isinstance(output, list):
+            output = output[0]
         activations.append(output.cpu())
         ys.append(y)
     activations = torch.cat(activations, dim=0).numpy()
@@ -180,13 +188,14 @@ for i in range(args.trials):
             diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            inter_scaling=1,
             # This is not used in ron, to scale internal recurrent use reservoir scalre
             reservoir_scaler=0,
             device=device,
             connectivity_input=int((1-args.sparsity *n_inp)),  
             connectivity_inter=int(args.n_hid / args.n_layers),
             concat=True,
+            topology=args.topology,
         ).to(device)
     elif args.pron:
         model = PhysicallyImplementableRandomizedOscillatorsNetwork(
@@ -217,6 +226,8 @@ for i in range(args.trials):
     for x, y in tqdm(train_loader):
         x = x.to(device)
         output = model(x)[-1][0]
+        if isinstance(output, list):
+            output = output[0]
         activations.append(output.cpu())
         ys.append(y)
     activations = torch.cat(activations, dim=0).numpy()

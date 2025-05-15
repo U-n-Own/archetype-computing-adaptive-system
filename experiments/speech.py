@@ -88,11 +88,28 @@ parser.add_argument(
     action="store_true", 
     help="Use last hidden state instead of all states for readout"
 )
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
 # if no --use_last_state is provided, use all states
 
 args = parser.parse_args()
 # make sure that n_hid_layers is a list of integers
 args.n_hid_layers = [int(x) for x in args.n_hid_layers.split(",")]
+
+# Set random seed for reproducibility
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+if args.wandb:
+    import wandb
+    wandb.init(
+        project="deep-ron-thesis",
+        job_type="speech_experiment",
+        config=vars(args)
+    )
 
 if args.dataroot is None:
     warnings.warn("No dataroot provided. Using current location as default.")
@@ -149,7 +166,7 @@ def load_speech_data(dataroot: str):
     combined_labels = np.concatenate(all_labels, axis=0)
     
     # Split into train and test sets
-    np.random.seed(42)
+    np.random.seed(args.seed)
     indices = np.random.permutation(combined_data.shape[0])
     train_size = int(combined_data.shape[0] * 0.8)  # 80% train
     test_size = combined_data.shape[0] - train_size
@@ -295,22 +312,21 @@ for i in range(args.trials):
             concat=args.concat,          
             connectivity_input=int((1-args.sparsity *n_inp)),  
             connectivity_inter=int(args.n_hid / args.n_layers),
-            reservoir_scaler=0,  # Use args.reservoir_scaler
+            reservoir_scaler=0,  
             device=device,
-            cycle=args.cycle,  # Add cycle parameter
+            cycle=args.cycle,  
         ).to(device)
     else:
         raise ValueError("No model type specified. Please use --esn, --ron, --pron, --mspron, or --deepron.")
 
-    model.eval()  # Set model to evaluation mode
+    model.eval() 
     
     # check parameters of deepron
     # print parameters
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
         
-    # Process training data to get activations
     print("Processing training data...")
-    activations_list = [] # Renamed to avoid conflict if 'activations' is used later before this scope ends
+    activations_list = [] 
 
     # Ensure X_train is a tensor for batching
     if not isinstance(X_train, torch.Tensor):
@@ -318,7 +334,7 @@ for i in range(args.trials):
     else:
         X_train_tensor = X_train
         
-    current_batch_size = args.batch # Use a local variable for batch_size for clarity
+    current_batch_size = args.batch 
     
     for j in tqdm(range(0, X_train_tensor.shape[0], current_batch_size), desc="Processing train data batches"):
         batch_X = X_train_tensor[j:j+current_batch_size].to(device)
@@ -392,3 +408,14 @@ ar += (
 )
 f.write(ar + "\n")
 f.close()
+
+if args.wandb:
+    wandb.log({
+        "train_accs": train_accs,
+        "test_accs": test_accs,
+        "mean_train_acc": float(np.mean(train_accs)),
+        "std_train_acc": float(np.std(train_accs)),
+        "mean_test_acc": float(np.mean(test_accs)),
+        "std_test_acc": float(np.std(test_accs)),
+        "args": vars(args)
+    })

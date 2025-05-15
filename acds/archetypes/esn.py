@@ -372,7 +372,6 @@ class DeepReservoir(torch.nn.Module):
                     layer_states[i].append(h_t)
                     
                     if i == len(self.reservoir) - 1:
-                        # update for next timestep
                         last_layer_hidden = h_t  
                 # update for next timestep
                 h_last = h_t  

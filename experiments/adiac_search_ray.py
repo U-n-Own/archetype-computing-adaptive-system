@@ -9,6 +9,8 @@ from acds.archetypes.utils import count_parameters
 from collections import defaultdict
 import os
 import tensorboard
+import random
+from experiments.utils import set_seed
 
 # import List
 from typing import List
@@ -62,13 +64,12 @@ parser.add_argument("--resultsuffix", type=str, default="")
 parser.add_argument("--bayesian", action="store_true")
 parser.add_argument("--cycle", action="store_true")
 parser.add_argument("--dataroot", type=str)
+parser.add_argument("--concat", action="store_true")
 args = parser.parse_args()
 
-os.environ["PYTHONHASHSEED"] = "42"
-np.random.seed(42)
-torch.manual_seed(42)
-torch.use_deterministic_algorithms(True)
-
+# Set random seed for reproducibility (match adiac.py and utils.py)
+SEED = 42
+set_seed(SEED)
 
 
 def train_adiac(config):
@@ -76,7 +77,6 @@ def train_adiac(config):
     np.random.seed(42)
     torch.manual_seed(42)
     torch.use_deterministic_algorithms(True)
-    torch.manual_seed(42) 
     
     assert args.dataroot is not None, "No dataroot provided."
     if args.resultroot is None:
@@ -99,36 +99,37 @@ def train_adiac(config):
     if args.esn:
         model = DeepReservoir(
             input_size=1,
-            tot_units=args.n_hid,
+            tot_units=int(config["n_hid"]),
             spectral_radius=config["rho"],
             n_layers=int(config["n_layers"]),
-            input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
-            leaky=args.leaky,
+            input_scaling=config["input_scaling"],
+            inter_scaling=config["inter_scaling"],
+            leaky=config["leaky"],
             concat=True,
-            connectivity_input=args.n_hid,
-            #connectivity_inter=int(args.n_hid / config["n_layers"]),
-            connectivity_recurrent=int(args.n_hid / config["n_layers"]),
+            connectivity_input=int(config["n_hid"]),
+            connectivity_recurrent=int(config["n_hid"] / config["n_layers"]),
             cycle=args.cycle,
         )
     elif args.deepron:
-        #TODO Calculate the bounded range for gamma and epsilon
         gamma = (config["gamma"] - config["gamma_range"] / 2.0, config["gamma"] + config["gamma_range"] / 2.0)
         epsilon = (config["epsilon"] - config["epsilon_range"] / 2.0, config["epsilon"] + config["epsilon_range"] / 2.0)
         model = DeepRandomizedOscillatorsNetwork(
             n_inp=1,
             n_layers=int(config["n_layers"]),
-            total_units=args.n_hid,
+            total_units=int(config["n_hid"]),
             dt=config["dt"],
             gamma=gamma,
             epsilon=epsilon,
             input_scaling=config["input_scaling"],
             inter_scaling=config["inter_scaling"],
-            reservoir_scaler=args.inp_scaling,
-            connectivity_input=int(args.n_hid / config["n_layers"]),
-            connectivity_inter=int(args.n_hid / config["n_layers"]),
+            reservoir_scaler=config["input_scaling"],
+            connectivity_input=int(1-args.sparsity * 1),
+            connectivity_inter=int(config["n_hid"] / config["n_layers"]),
             rho=config["rho"],
             cycle=args.cycle,
+            concat=True,
+            device=device,
+            topology=args.topology,
         )
    
    # run adiac.py with the selected model
@@ -139,6 +140,8 @@ def train_adiac(config):
         for x, y in tqdm(data_loader):
             x = x.to(device)
             output = model(x)[-1][0]
+            if isinstance(output, list):
+                output = output[0]  # or torch.stack(output) if needed
             activations.append(output.cpu())
             ys.append(y)
         activations = torch.cat(activations, dim=0).numpy()
@@ -174,7 +177,11 @@ def train_adiac(config):
     for x, y in tqdm(train_loader):
         x = x.to(device)
         output = model(x)[-1][0]
+        if isinstance(output, list):
+            output = output[0]  # or torch.stack(output), depending on your model
         activations.append(output.cpu())
+        #output = model(x)[-1][0]
+        #activations.append(output.cpu())
         ys.append(y)
     activations = torch.cat(activations, dim=0).numpy()
     ys = torch.cat(ys, dim=0).squeeze().numpy()
@@ -200,18 +207,37 @@ def train_adiac(config):
 def run_hyperparameter_search():
     # Bayesian optimization search 
     
-    search_space = {
-        #"gamma": tune.uniform(0, 1.5),
-        #"epsilon": tune.uniform(2, 4),
-        #"dt": tune.loguniform(1e-4, 1),
-        "rho": tune.uniform(0.99, 0.999),
+    oldsearch_space = {
+        "gamma": tune.uniform(1, 4),
+        "epsilon": tune.uniform(0.5, 4),
+        "dt": tune.loguniform(0.05, 0.1),
+        "rho": tune.uniform(0.99, 90),
         #"alpha": tune.uniform(1e-9, 1e-9),
-        #"gamma_range": tune.uniform(1, 2),
-        #"epsilon_range": tune.uniform(0.1, 0.1),
-        "n_layers": tune.uniform(args.n_layers, args.n_layers),
-        "input_scaling": tune.uniform(50, 50),
-        "inter_scaling": tune.uniform(50, 50),
-        "leaky": tune.loguniform(0.0001, 0.0001)
+        "gamma_range": tune.uniform(0.5, 2),
+        "epsilon_range": tune.uniform(0, 1),
+        "n_hid": 100,
+        #"n_layers": tune.randint(1, 11),
+        "n_layers": tune.quniform(1, 10, 1),  # returns float values 1.0, 2.0, ..., 10.0
+        "input_scaling": tune.uniform(0, 20),
+        "inter_scaling": 1,
+        #"leaky": tune.loguniform(0.00001, 0.001)
+        #"inter_scaling": tune.uniform(0.1, 0.2),
+    }
+    
+    search_space = {
+        "gamma": 3.32,
+        "epsilon": 1.147,
+        "dt": 0.077,
+        "rho": 83.046,
+        #"alpha": tune.uniform(1e-9, 1e-9),
+        "gamma_range": 1.909,
+        "epsilon_range": 0.969,
+        "n_hid": 100,
+        #"n_layers": tune.randint(1, 11),
+        "n_layers": 6,  # returns float values 1.0, 2.0, ..., 10.0
+        "input_scaling": 17.89,
+        "inter_scaling": 1,
+        #"leaky": tune.loguniform(0.00001, 0.001)
         #"inter_scaling": tune.uniform(0.1, 0.2),
     }
 
@@ -233,8 +259,8 @@ def run_hyperparameter_search():
         train_adiac,
         tune_config=tune.TuneConfig(
             # if bayesopt is None do random search
-            search_alg=[bayesopt] if bayesopt is not None else None,
-            num_samples=150,  # Number of trials
+            search_alg=bayesopt if bayesopt is not None else None,
+            num_samples=1,  # Number of trials
         ),
         param_space=search_space,
     )
@@ -250,7 +276,7 @@ if __name__ == "__main__":
 
     # Add weights and biases logging
     if args.wandb:
-        wandb.init(project="deep-ron-thesis", entity="vincent", config=args, sync_tensorboard=True)
+        wandb.init(project="deep-ron-thesis", entity="vincent", config=args, sync_tensorboard=True, job_type="Adiac search")
         wandb.run.save()
 
         
@@ -265,4 +291,4 @@ if __name__ == "__main__":
     run_hyperparameter_search()
 
     #ray.shutdown()
-    
+
