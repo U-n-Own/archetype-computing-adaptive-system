@@ -79,65 +79,84 @@ class ReservoirCell(torch.nn.Module):
         self.connectivity_recurrent = connectivity_recurrent
         self.cycle = cycle
         
-        self.kernel = (
-            sparse_tensor_init(input_size, self.units, self.connectivity_input)
-            * self.input_scaling
-        )
-        self.kernel = nn.Parameter(self.kernel, requires_grad=False)
-
-        W = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
-        # re-scale the weight matrix to control the effective spectral radius
-        # of the linearized system
-        if self.leaky == 1:
-            W = spectral_norm_scaling(W, spectral_radius)
-            self.recurrent_kernel = W
+        # For SCR-like behavior, use simple input connectivity
+        if self.cycle and self.units == 1:
+            # Single unit per layer - SCR-like connectivity
+            # Input weight with random sign
+            input_weight = self.input_scaling * (torch.randint(0, 2, (1, input_size)) * 2 - 1).float()
+            self.kernel = nn.Parameter(input_weight, requires_grad=False)
+            
+            # No self-recurrent connection for single unit layers in cycle mode
+            self.recurrent_kernel = nn.Parameter(torch.zeros(1, 1), requires_grad=False)
         else:
-            I = sparse_eye_init(self.units)
-            W = W * self.leaky + (I * (1 - self.leaky))
-            W = spectral_norm_scaling(W, spectral_radius)
-            self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
-        self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
+            # Original sparse connectivity for multi-unit layers
+            self.kernel = (
+                sparse_tensor_init(input_size, self.units, self.connectivity_input)
+                * self.input_scaling
+            )
+            self.kernel = nn.Parameter(self.kernel, requires_grad=False)
+
+            W = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
+            # re-scale the weight matrix to control the effective spectral radius
+            # of the linearized system
+            if self.leaky == 1:
+                W = spectral_norm_scaling(W, spectral_radius)
+                self.recurrent_kernel = W
+            else:
+                I = sparse_eye_init(self.units)
+                W = W * self.leaky + (I * (1 - self.leaky))
+                W = spectral_norm_scaling(W, spectral_radius)
+                self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
+            self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
 
         if self.cycle:
-            # between -1 and 1
-            self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling         
-            
-            #self.projection_kernel = nn.Parameter(projection, requires_grad=False)
-            #init like recurrent
-            #self.projection_kernel = torch.eye(self.units) * 0.2
-            #self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
-            
-            #self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
-            #self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
-            # use same as sparse_recurrent_tensor_init
-            self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+            # For SCR-like behavior with single units per layer
+            if self.units == 1:
+                # Simple projection weight for single unit (like SCR cycle weight)
+                self.projection_kernel = nn.Parameter(torch.tensor([[spectral_radius]]), requires_grad=False)
+            else:
+                # Original dense projection for multi-unit layers
+                self.projection_kernel = nn.init.uniform_(torch.empty(self.units, self.units), -1, 1) * self.input_scaling         
+                self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
     
-        # uniform init in [-1, +1] times input_scaling
-        self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
-        self.bias = nn.Parameter(self.bias, requires_grad=False)
+        # For SCR-like behavior, use simple bias
+        if self.cycle and self.units == 1:
+            # No bias for single unit layers in cycle mode (like SCR)
+            self.bias = nn.Parameter(torch.zeros(self.units), requires_grad=False)
+        else:
+            # uniform init in [-1, +1] times input_scaling
+            self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
+            self.bias = nn.Parameter(self.bias, requires_grad=False)
 
     def forward(self, xt: torch.Tensor, h_prev: torch.Tensor, first_layer: bool = False, h_last: Optional[torch.Tensor] = None):
         """Computes the output of the cell given the input and previous state.
 
         Args:
-            xt (torch.Tensor): input tensor shaped as (batch, time, input_dim).
-            h_prev (torch.Tensor): previous state tensor shaped as
-                (batch, time, state_dim).
+            xt (torch.Tensor): input tensor shaped as (batch, input_dim).
+            h_prev (torch.Tensor): previous state tensor shaped as (batch, state_dim).
+            first_layer (bool): whether this is the first layer in the stack.
+            h_last (torch.Tensor): feedback from the last layer for cycle connections.
         Returns:
-            torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
-            torch.Tensor: hidden state tensor shaped as (batch, time, state_dim).
+            torch.Tensor: output to next layer shaped as (batch, state_dim).
+            torch.Tensor: hidden state tensor shaped as (batch, state_dim).
         """     
-        linear = False
+        linear = True
          
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
-        # check if first layer
+        
+        # SCR-like cycle connection: only for first layer, use h_last as previous layer's output
         if self.cycle and first_layer and h_last is not None:
-            # dimension check
-            assert h_last.size(1) == self.units, f"Mismatch in hidden dimensions: expected {self.units}, got {h_last.size(1)}"
-            # init h_last
-            h_to_project = h_last
-            last_hidden_part = torch.mm(h_to_project, self.projection_kernel.to(dtype=xt.dtype))
+            # For SCR-like behavior: h_last is the output from the previous unit in the cycle
+            if self.units == 1:
+                # Single unit: direct connection from previous unit
+                assert h_last.size(1) == 1, f"Expected single unit input, got {h_last.size(1)}"
+                last_hidden_part = torch.mm(h_last, self.projection_kernel.to(dtype=xt.dtype))
+            else:
+                # Multi-unit layer: use full projection matrix
+                assert h_last.size(1) == self.units, f"Mismatch in hidden dimensions: expected {self.units}, got {h_last.size(1)}"
+                last_hidden_part = torch.mm(h_last, self.projection_kernel.to(dtype=xt.dtype))
+            
             if linear:
                 output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype)
             else:
@@ -148,8 +167,14 @@ class ReservoirCell(torch.nn.Module):
             else:    
                 output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
 
-        leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
-        return leaky_output, leaky_output
+        # For SCR-like behavior with single units, skip leaky integration
+        if self.cycle and self.units == 1:
+            # Direct output like SCR
+            return output, output
+        else:
+            # Original leaky integration
+            leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
+            return leaky_output, leaky_output
             
 class ReservoirLayer(torch.nn.Module):
     """Shallow reservoir to be used as Recurrent Neural Network layer.
@@ -352,33 +377,45 @@ class DeepReservoir(torch.nn.Module):
         batch_size, seq_len, _ = X.shape
         
         if self.cycle:
+            # SCR-like processing: all units computed simultaneously using previous timestep states
             batch_size, seq_len, _ = X.shape
-            h_last = torch.zeros(batch_size, self.reservoir[0].net.units).to(X.device)
-            last_layer_hidden = torch.zeros(batch_size, self.layers_units).to(X.device)
+            
+            # Initialize hidden states for each layer (unit) - these represent the full reservoir state
+            h = torch.zeros(batch_size, len(self.reservoir)).to(X.device)
             layer_states = [[] for _ in range(len(self.reservoir))]
+            
             for t in range(seq_len):
-                xt = X[:, t, :]
-                # Save last_layer_hidden from previous timestep for feedback:  y_k^(L)
-                current_last_hidden = last_layer_hidden.clone()
-                # previous state for first layer: y_k^(1)
-                h_t = h_last  
+                current_input = X[:, t, :]  # Original input at time t
+                new_h = torch.zeros(batch_size, len(self.reservoir)).to(X.device)
+                
+                # Compute all units simultaneously (like SCR)
                 for i, res_layer in enumerate(self.reservoir):
+                    # Each unit gets: input * weight + previous_unit_state * cycle_weight
                     if i == 0:
-                        # first layer : getting projection y_k^(L)
-                        xt, h_t = res_layer.net(xt, h_t, first_layer=True, h_last=current_last_hidden)
+                        # First unit gets feedback from last unit (cycle connection)
+                        prev_unit_state = h[:, -1:] if h.shape[1] > 1 else torch.zeros(batch_size, 1).to(X.device)
                     else:
-                        xt, h_t = res_layer.net(xt, h_t, first_layer=False)
-                    # for each layer and timestep, save the state
-                    layer_states[i].append(h_t)
+                        # Other units get state from previous unit
+                        prev_unit_state = h[:, i-1:i]
                     
-                    if i == len(self.reservoir) - 1:
-                        last_layer_hidden = h_t  
-                # update for next timestep
-                h_last = h_t  
+                    # Use the reservoir cell to compute the unit's new state
+                    unit_output, unit_hidden = res_layer.net(
+                        current_input, torch.zeros(batch_size, 1).to(X.device), 
+                        first_layer=True, h_last=prev_unit_state
+                    )
+                    new_h[:, i:i+1] = unit_output
+                    
+                    # Store state for this unit and timestep
+                    layer_states[i].append(unit_output)
+                
+                # Update hidden state for next timestep
+                h = new_h
+            
+            # Convert to proper format
             for i in range(len(self.reservoir)):
                 stacked_states = torch.stack(layer_states[i], dim=1)
                 states.append(stacked_states)
-                states_last.append(stacked_states[:, -1, :]) 
+                states_last.append(stacked_states[:, -1, :])
         else:
             # standard behaviour
             for i, res_layer in enumerate(self.reservoir):
@@ -391,6 +428,12 @@ class DeepReservoir(torch.nn.Module):
         if self.concat:
             states = torch.cat(states, dim=2)
         else:
-            states = states[-1]
+            # For SCR-like behavior, concatenate all layer outputs to match SCR structure
+            if self.cycle and all(layer.net.units == 1 for layer in self.reservoir):
+                # Each layer has 1 unit, concatenate to form complete reservoir state
+                states = torch.cat(states, dim=2)
+            else:
+                # Original behavior: return only last layer
+                states = states[-1]
             
         return states, states_last#, states_uncat

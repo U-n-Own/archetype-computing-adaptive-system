@@ -22,8 +22,9 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from acds.archetypes import (
     DeepReservoir,
     RandomizedOscillatorsNetwork,
-    DeepRandomizedOscillatorsNetwork
+    DeepRandomizedOscillatorsNetwork   
 )
+
 
 # set a seed for all randomness sources
 seed = 42
@@ -56,7 +57,7 @@ parser.add_argument("--n_layers", type=int, default=1, help="Number of layers of
 parser.add_argument(
     "--sparsity", type=float, default=0.0, help="Sparsity of the reservoir"
 )
-parser.add_argument("--ron_leaky_esn", type=bool, default=False)
+parser.add_argument("--ron_leaky_esn", action="store_true", help="Use leaky ESN with RON")
 parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="diffusive term")
 parser.add_argument("--topology", type=str, default="full", choices=["full", "antisymmetric", "orthogonal"], help="Topology of the hidden-to-hidden matrix")
 parser.add_argument("--use_test", action="store_true")
@@ -109,7 +110,7 @@ if args.resultroot is None:
 
 n_inp = 1
 n_out = 1
-washout = 100
+washout = 1000
 # TODO this should be set automatically to double of units of the model
 delay = args.delay
 
@@ -210,7 +211,7 @@ for t in range(args.trials):
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
             connectivity_recurrent=units_per_layer,
             connectivity_input=units_per_layer,
-            connectivity_inter=units_per_layer,
+            connectivity_inter=1,
             leaky=args.leaky,
             cycle=args.cycle,
         ).to(device)
@@ -224,7 +225,6 @@ for t in range(args.trials):
             diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
-            reservoir_scaler=args.inp_scaling,
             topology=args.topology,
             device=device,
         ).to(device)
@@ -239,7 +239,7 @@ for t in range(args.trials):
             diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            inter_scaling=args.inter_scaling,
             # This is not used in ron, to scale internal recurrent use reservoir scalre
             reservoir_scaler=args.inp_scaling,
             device=device,
@@ -248,12 +248,44 @@ for t in range(args.trials):
             concat=args.concat,
             cycle=args.cycle,
         ).to(device)
+        
     else:
-        raise ValueError("Wrong model choice.")
+        raise ValueError("Select exactly one of --esn / --ron / --deepron")
 
-    print(model)
-    print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
-    print(f"Number of parameters per layer: {count_parameters(model)}")
+    DEBUG_PARAMS = False
+    if DEBUG_PARAMS:
+        print(model)
+        # print number of parameters and subtract bias
+        def count_parameters(model):
+            # count only bias and subtract it from the total number of parameters
+            # count only bias
+            #count each type of parameter
+            num_params = 0
+            for name, param in model.named_parameters():
+                if "bias" in name:
+                    num_params += param.numel()
+            return num_params
+        
+        print(f"Number of parameters (including bias): {sum(p.numel() for p in model.parameters())}")
+        # print number of parameters and subtract bias
+        print(f"Number of parameters (excluding bias): {sum(p.numel() for p in model.parameters()) - count_parameters(model)}")
+    else:
+        print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
+        #print(f"Number of parameters per layer: {count_parameters(model)}")
+
+    if DEBUG_PARAMS:    
+        # print number of units in the model
+        for name, params in model.named_parameters():
+            print(f"{name}: {params.shape}")
+        
+        for name, param in model.named_parameters():    
+            if "bias" in name:
+                print(name, param.shape)
+    
+    # set to 0 the bias
+    for name, param in model.named_parameters():
+        if "bias" in name:
+            param.data.fill_(0)
     
     total_train_memory, total_test_memory, total_val_memory = 0, 0, 0 
         
@@ -292,8 +324,8 @@ for t in range(args.trials):
     y_train, y_test = y_all[:split_idx_train], y_all[split_idx_train:split_idx_test]
     
     # Add washout
-    X_train, X_test = X_train[washout:], X_test[washout:]
-    y_train, y_test = y_train[washout:], y_test[washout:]
+    X_train = X_train[washout:]
+    y_train = y_train[washout:]
     
     # Normalize the data
     scaler = preprocessing.StandardScaler().fit(X_train)
