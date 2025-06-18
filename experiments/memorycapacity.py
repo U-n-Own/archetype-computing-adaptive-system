@@ -333,10 +333,18 @@ for t in range(args.trials):
     X_test = scaler.transform(X_test)
     
     # Train a single classifier that outputs all delays
-    #classifier = Ridge(max_iter=1000, alpha=0)
-    #classifier.fit(X_train, y_train)
-    # use pseudo inverse
-    classifier = np.linalg.pinv(X_train) @ y_train
+    # Try pseudo-inverse first, fall back to Ridge regression with regularization if it fails
+    try:
+        classifier = np.linalg.pinv(X_train) @ y_train
+        print("Using pseudo-inverse for classification")
+    except np.linalg.LinAlgError as e:
+        print(f"Pseudo-inverse failed ({e}), using Ridge regression with regularization")
+        from sklearn.linear_model import Ridge
+        ridge = Ridge(alpha=1e-6, max_iter=10000)
+        ridge.fit(X_train, y_train)
+        classifier = ridge.coef_.T
+        if len(classifier.shape) == 1:
+            classifier = classifier.reshape(-1, 1)
     
     y_hat_train = X_train @ classifier
     y_hat_test = X_test @ classifier
