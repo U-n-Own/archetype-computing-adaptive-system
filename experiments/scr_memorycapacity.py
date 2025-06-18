@@ -27,7 +27,7 @@ parser.add_argument("--r", type=float, default=0.5, help="Recurrent weight (cycl
 parser.add_argument("--v", type=float, default=0.5, help="Input weight magnitude")
 parser.add_argument("--trials", type=int, default=1)
 parser.add_argument("--cpu", action="store_true")
-parser.add_argument("--washout", type=int, default=100)
+parser.add_argument("--washout", type=int, default=1000)
 parser.add_argument("--concat", action="store_true", help="Concatenate hidden states")
 args = parser.parse_args()
 
@@ -96,7 +96,7 @@ train_memory_dict, test_memory_dict = defaultdict(list), defaultdict(list)
 for t in range(args.trials):
     print(f"Trial {t+1}/{args.trials}")
     
-    n_layers = 20
+    n_layers = args.n_reservoir
 # try ESN
     model = DeepReservoir(
         input_size=1,
@@ -138,8 +138,9 @@ for t in range(args.trials):
         states_u = states_u.reshape(-1, args.n_reservoir)
     # this when we want just to take last state, because
     # if hidden states are not concatenated we have to reshape accordingly
-    else:
-        states_u = states_u.reshape(-1, args.n_reservoir // n_layers)
+else:
+    # keep original reservoir dimension when using a single-layer SCR
+    states_u = states_u.reshape(-1, args.n_reservoir)
     
     # Prepare data for all delays simultaneously
     X_all = states_u[args.delay:num_steps, :]
@@ -157,8 +158,8 @@ for t in range(args.trials):
     y_train, y_test = y_all[:split_idx_train], y_all[split_idx_train:split_idx_test]
     
     # Apply washout
-    X_train, X_test = X_train[args.washout:], X_test[args.washout:]
-    y_train, y_test = y_train[args.washout:], y_test[args.washout:]
+    X_train = X_train[args.washout:]
+    y_train = y_train[args.washout:]
     
     # Normalize the data
     scaler = preprocessing.StandardScaler().fit(X_train)

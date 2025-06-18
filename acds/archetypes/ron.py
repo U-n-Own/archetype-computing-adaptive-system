@@ -5,9 +5,7 @@ from typing import (
     Union,
 )
 
-# import torch 1d convolution
-import torch.nn.functional as F
-from torch.nn import Conv1d
+
 
 
 import torch
@@ -112,10 +110,12 @@ class RandomizedOscillatorsNetwork(nn.Module):
             h2h = spectral_norm_scaling(h2h, rho)              
         self.h2h = nn.Parameter(h2h, requires_grad=False)
 
-        # add the last hidden state to the input trough a projection
+        # add the cycle kernel for cyclic feedback if needed
         if self.cycle:
-            l2x = (2*(torch.rand(n_hid, n_hid))-1) * input_scaling
-            self.l2x = nn.Parameter(l2x, requires_grad=False)   
+            # For cycle functionality, we need to know the size of the last layer
+            # This will be set during initialization of DeepRandomizedOscillatorsNetwork
+            # make a cycle kernel init as Wrec form last layer to first layer
+            pass
         else:
             # nothing
             pass
@@ -134,22 +134,22 @@ class RandomizedOscillatorsNetwork(nn.Module):
             x (torch.Tensor): Input tensor.
             hy (torch.Tensor): Current hidden state.
             hz (torch.Tensor): Current hidden state derivative.
+            first_layer (bool): Whether this is the first layer.
+            h_last (torch.Tensor): Hidden state from the last layer for cycle feedback.
         """
         # convert to same type of x
         hz = hz.to(x.dtype)
         hy = hy.to(x.dtype)
         
-        last_hidden_part = 0
+        cycle_part = 0
         
-        if first_layer and self.cycle and h_last is not None:
-            # take previous last hidden state and add it to the input
-            last_hidden_part = torch.matmul(h_last, self.l2x.to(dtype=x.dtype))
-            
-        
-        
+        if self.cycle and first_layer and h_last is not None:
+            # Project h_last with cycle_kernel and add to the input
+            cycle_part = torch.matmul(h_last, self.cycle_kernel.to(dtype=x.dtype))
+         
         hz = hz + self.dt * (
             torch.tanh(
-                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype) + (last_hidden_part) - self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype))
+                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype)) + cycle_part - torch.matmul(hy, self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype))
             - self.gamma * hy
             - self.epsilon * hz
         )
@@ -250,7 +250,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         
         self.concat = concat
 
-        if concat or True:
+        if concat:
             self.layer_units = int(total_units / n_layers) 
         else:
             self.layer_units = total_units
@@ -266,11 +266,11 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     dt=dt,
                                     gamma=gamma,
                                     epsilon=epsilon,
-                                    topology=topology, # Pass topology
-                                    sparsity=sparsity, # Pass sparsity
+                                    topology=topology, 
+                                    sparsity=sparsity, 
                                     reservoir_scaler=self.reservoir_scaler,
                                     cycle=self.cycle,
-                                    device=device, # Pass device
+                                    device=device, 
                                     #TODO still sparse connectivity to implement
                                     #connectivity_input=connectivity_input_1,
                                     #connectivity_recurrent=connectivity_input_others,
@@ -284,24 +284,32 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                 RandomizedOscillatorsNetwork(
                     n_inp=last_h_size, n_hid=self.layer_units,
                     input_scaling=input_scaling_others,
-                    # slighlty change the dt for each layer by adding incrementally for each layer the dt 
-                    # try to change a little bit the dt for each layer (add noise -0.05, 0.05 for example)
                     dt= dt,
                     gamma=gamma,
                     epsilon=epsilon,
-                    topology=topology, # Pass topology
-                    sparsity=sparsity, # Pass sparsity
-                    reservoir_scaler=reservoir_scaler, # Pass reservoir_scaler
+                    topology=topology, 
+                    sparsity=sparsity, 
+                    reservoir_scaler=reservoir_scaler, 
                     cycle=self.cycle,
-                    device=device, # Pass device
+                    device=device, 
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
                 )
             )
             last_h_size = self.layer_units
         self.ron_reservoir = nn.ModuleList(deepron_layers)
+        
+        # Initialize cycle kernels if cycle is enabled
+        if self.cycle:
+            # The first layer needs a cycle kernel to receive feedback from the last layer
+            last_layer_size = self.layer_units
+            first_layer_size = self.layer_units + total_units % n_layers
+            
+            # implement cycle kernel as the W_h matrix (inout x hidden)
+            cycle_kernel = torch.rand(self.layer_units, last_layer_size) * inter_scaling
+            self.ron_reservoir[0].cycle_kernel = nn.Parameter(cycle_kernel, requires_grad=False)
     
-    def forward(self, hy: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Forward pass on the layers of the DeepRON a given input time-series.
 
         Args:
@@ -317,31 +325,53 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         states = []
        
         if self.cycle:
-            last_layer_hidden = None 
+            # Initialize hidden states for all layers
+            batch_size, seq_len, _ = x.shape
+            
+            # Initialize hidden states and derivatives for all layers
+            h_states = []
+            hz_states = []
             for i, ron_layer in enumerate(self.ron_reservoir):
-                h_last_to_pass = last_layer_hidden if i == 0 else None
-                [hy, last_state] = ron_layer(hy, first_layer=(i == 0), h_last=h_last_to_pass)
-                states.append(hy)
-                layer_states.append(last_state[0])
+                h_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=x.device))
+                hz_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=x.device))
+            
+            layer_states_all = [[] for _ in range(len(self.ron_reservoir))]
+
+            for t in range(seq_len):
+                xt = x[:, t, :]
+                # Save last layer's previous hidden state for feedback
+                last_layer_hidden_prev = h_states[-1].clone()
                 
-                # update last hidden layer to
-                if i == len(self.ron_reservoir) - 1:
-                    last_layer_hidden = hy
+                for i, ron_layer in enumerate(self.ron_reservoir):
+                    if i == 0:
+                        # Pass cyclic feedback from last layer to first layer
+                        h_states[i], hz_states[i] = ron_layer.cell(xt, h_states[i], hz_states[i], first_layer=True, h_last=last_layer_hidden_prev)
+                    else:
+                        # Pass output from previous layer as input
+                        h_states[i], hz_states[i] = ron_layer.cell(h_states[i-1], h_states[i], hz_states[i], first_layer=False)
+                    
+                    layer_states_all[i].append(h_states[i])
+
+            # Stack the layer states over time dimension
+            for i in range(len(self.ron_reservoir)):
+                stacked_states = torch.stack(layer_states_all[i], dim=1)
+                states.append(stacked_states)
+                layer_states.append(stacked_states[:, -1, :])
         else:
             for i, ron_layer in enumerate(self.ron_reservoir):
-                [hy, last_state] = ron_layer(hy)
-                states.append(hy)
+                [x, last_state] = ron_layer(x)
+                states.append(x)
                 layer_states.append(last_state)
             
         states_uncat = states
         
         if self.concat:
             # check what dim we need to concat
-            hy = torch.cat(states, dim=2)
+            x = torch.cat(states, dim=2)
         else:
             # if not concat, return only the last layer
-            hy = states[-1]
+            x = states[-1]
             
        # Choose if return all_states from all layers for the  
        
-        return hy, layer_states#, states_uncat
+        return x, layer_states#, states_uncat
