@@ -68,6 +68,7 @@ parser.add_argument("--rho", type=float, default=0.99, help="ESN spectral radius
 parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radius")
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers")
 parser.add_argument("--concat", action="store_true")
+parser.add_argument("--cycle", action="store_true", help="Enable cycle connections")
 parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
@@ -160,7 +161,9 @@ for i in range(args.trials):
             input_scaling=args.inp_scaling,
             leaky=args.leaky, 
             connectivity_input=args.n_hid,
-            connectivity_recurrent=int((1-args.sparsity)*args.n_hid)
+            connectivity_recurrent=int((1-args.sparsity)*args.n_hid),
+            connectivity_inter=int(args.n_hid / args.n_layers),
+            cycle=args.cycle,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(

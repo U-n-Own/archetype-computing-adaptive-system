@@ -48,6 +48,7 @@ class ReservoirCell(torch.nn.Module):
         connectivity_input: int = 10,
         connectivity_recurrent: int = 10,
         cycle: bool = False,
+        linear: bool = False,
     ):
         """Initializes the ReservoirCell.
 
@@ -78,6 +79,7 @@ class ReservoirCell(torch.nn.Module):
         self.connectivity_input = connectivity_input
         self.connectivity_recurrent = connectivity_recurrent
         self.cycle = cycle
+        self.linear = linear
         
         
         if self.cycle:
@@ -127,8 +129,10 @@ class ReservoirCell(torch.nn.Module):
 
         # Initialize bias based on cycle mode
         if self.cycle:
-            # No bias for cycle mode (like SCR)
-            self.bias = nn.Parameter(torch.zeros(self.units), requires_grad=False)
+            self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
+            # bias to cpu
+            self.bias = nn.Parameter(self.bias, requires_grad=False)
+            #self.bias = nn.Parameter(torch.zeros(self.units), requires_grad=False)
         else:
             # uniform init in [-1, +1] times input_scaling
             self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
@@ -146,8 +150,6 @@ class ReservoirCell(torch.nn.Module):
             torch.Tensor: output to next layer shaped as (batch, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, state_dim).
         """     
-        linear = True
-         
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         
@@ -157,13 +159,13 @@ class ReservoirCell(torch.nn.Module):
             # h_last should have the same number of units as current layer for ring topology                
             last_hidden_part = torch.mm(h_last, self.projection_kernel.to(dtype=xt.dtype))
             
-            if linear:
+            if self.linear:
                 output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype)
             else:    
                 output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype))
         else:
             # Standard behavior: no cycle connection
-            if linear:
+            if self.linear:
                 output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
             else:
                 output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
@@ -196,6 +198,7 @@ class ReservoirLayer(torch.nn.Module):
         connectivity_input: int = 10,
         connectivity_recurrent: int = 10,
         cycle: bool = False,
+        linear: bool = False,
     ):
         """Initializes the ReservoirLayer.
 
@@ -224,6 +227,7 @@ class ReservoirLayer(torch.nn.Module):
             connectivity_input,
             connectivity_recurrent,
             cycle,
+            linear,
         )
 
     def init_hidden(self, batch_size: int):
@@ -283,6 +287,7 @@ class DeepReservoir(torch.nn.Module):
         connectivity_input: int = 10,
         connectivity_inter: int = 10,
         cycle: bool = False,
+        linear: bool = False,
     ):
         """Initializes the DeepReservoir.
 
@@ -313,6 +318,7 @@ class DeepReservoir(torch.nn.Module):
         self.tot_units = tot_units
         self.concat = concat
         self.cycle = cycle
+        self.linear = linear
         self.batch_first = True  # DeepReservoir only supports batch_first
         # in case in which all the reservoir layers are concatenated, each level
         # contains units/layers neurons. This is done to keep the number of
@@ -340,7 +346,8 @@ class DeepReservoir(torch.nn.Module):
                 connectivity_input=connectivity_input_1,
                 connectivity_recurrent=connectivity_recurrent,
                 last_hidden_size=self.layers_units,
-                cycle=cycle
+                cycle=cycle,
+                linear=linear
             )
         ]
 
@@ -363,7 +370,8 @@ class DeepReservoir(torch.nn.Module):
                     connectivity_input=connectivity_input_others,
                     connectivity_recurrent=connectivity_recurrent,
                     last_hidden_size=self.layers_units,
-                    cycle=cycle
+                    cycle=cycle,
+                    linear=linear,  
                 )
             )
             last_h_size = self.layers_units

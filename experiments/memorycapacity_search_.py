@@ -114,6 +114,7 @@ def train_memory_capacity(config):
             connectivity_inter=int(args.n_hid / config["n_layers"]),
             rho=config["rho"],
             cycle=args.cycle,
+            linear=True,
         )
     
     # Add other model types as needed

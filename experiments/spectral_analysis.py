@@ -299,6 +299,7 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
                 connectivity_input=units_per_layer,
                 connectivity_inter=1,  # FIXED: Use same as memorycapacity.py
                 leaky=1.0,
+                linear=True,
                 cycle=True,  # Enable cycle connections
             ).to(device)
             
@@ -641,14 +642,20 @@ def run_spectral_analysis():
     
     print("\nPlotting...")
     
+    path = 'experiments/results_analysis'
+    
+    # Create the directory if it doesn't exist
+    import os
+    os.makedirs(path, exist_ok=True)
+    
     # Plot 1: Eigenvalues distribution for all configurations
-    fig1 = plot_eigenvalues_distribution(results, 'eigenvalue_distributions.png')
+    fig1 = plot_eigenvalues_distribution(results, os.path.join(path, 'eigenvalue_distributions.png'))
     
     # Plot 2: Memory capacity over delay until the last one
-    fig2 = plot_memory_capacity_vs_delay(results, 'memory_capacity_vs_delay.png')
+    fig2 = plot_memory_capacity_vs_delay(results, os.path.join(path, 'memory_capacity_vs_delay.png'))
     
     # Plot 3: Spectral properties vs configuration (adding more layers)
-    fig3 = plot_spectral_properties_vs_configuration(results, 'spectral_properties_vs_configuration.png')
+    fig3 = plot_spectral_properties_vs_configuration(results, os.path.join(path, 'spectral_properties_vs_configuration.png'))
     
     # Show the plots
     if fig1 is not None:

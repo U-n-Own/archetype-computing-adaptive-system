@@ -214,6 +214,7 @@ for t in range(args.trials):
             connectivity_inter=1,
             leaky=args.leaky,
             cycle=args.cycle,
+            linear=True,  
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
