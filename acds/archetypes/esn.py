@@ -81,21 +81,15 @@ class ReservoirCell(torch.nn.Module):
         
         
         if self.cycle:
-            # For cycle mode (SCR-like behavior)
+            # For single unit cycle we need to handle it differently
             if self.units == 1:
-                # Single unit per layer - SCR-like connectivity
-                # Input weight with random sign - Fix: should be (input_size, 1) for torch.mm(xt, kernel)
                 input_weight = self.input_scaling * (torch.randint(0, 2, (input_size, 1)) * 2 - 1).float()
                 self.kernel = nn.Parameter(input_weight, requires_grad=False)
                 
-               # No self-recurrent connection for single unit layers in cycle mode
                 self.recurrent_kernel = nn.Parameter(torch.zeros(1, 1), requires_grad=False)
                 
                 self.projection_kernel = nn.Parameter(torch.tensor([[spectral_radius]]), requires_grad=False)
             else:
-                # Multi unit layers in cycle connection
-                print(f"Using cycle connections with {self.units} units per layer")
-                
                 input_weights = self.input_scaling * (torch.randint(0, 2, (input_size, self.units)) * 2 - 1).float()
                 self.kernel = nn.Parameter(input_weights, requires_grad=False)
                 
@@ -110,7 +104,6 @@ class ReservoirCell(torch.nn.Module):
                 
                 # Ring projection from previous layer in cycle
                 self.projection_kernel = nn.Parameter(torch.eye(self.units) * spectral_radius, requires_grad=False)
-            
         else:
             # No cycle mode 
             self.kernel = (

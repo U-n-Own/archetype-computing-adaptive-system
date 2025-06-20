@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-Script per l'analisi spettrale di diverse architetture di reservoir.
-
-Analizza le seguenti configurazioni:
-- 1 layer fully connected con 100 unità
-- 2 layer a ciclo con 50 unità ciascuno  
-- 4 layer a ciclo con 25 unità ciascuno
-- 10 layer a ciclo con 10 unità ciascuno
-- 20 layer a ciclo con 5 unità ciascuno
-- 50 layer a ciclo con 2 unità ciascuno
-- 100 layer a ciclo con 1 unità ciascuno
-
-Per ogni configurazione calcola:
-- Spectral radius del Jacobiano totale
-- Spectral norm del Jacobiano totale  
-- Plot degli autovalori nel piano complesso
-"""
 
 import os
 import sys
@@ -30,8 +13,6 @@ from sklearn import preprocessing
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from acds.archetypes import DeepReservoir
-from acds.benchmarks.memory_capacity import get_memory_capacity
-
 
 def compute_spectral_properties(matrix):
     """Compute spectral radius and spectral norm of a matrix."""
@@ -62,8 +43,24 @@ def create_reservoir_architectures():
     return architectures
 
 
-def extract_jacobian_from_reservoir(model, device):
-    """Extract the effective Jacobian from a DeepReservoir model."""
+def construct_jacobian(model, device):
+    """Construct block matrix form of the Jacobian of 
+    The cycle network like follows:
+    [ W_rec_0  W_proj_0  0         ... ]
+    [ 0        W_rec_1  W_proj_1  ... ]
+    [ 0        0        W_rec_2   ... ]
+    ...
+    [ W_proj_n-1  0       0       W_rec_n-1 ]
+    
+    where W_rec_i are the recurrent weight matrices of each layer and
+    W_proj_i are the projection weights connecting layers in a cyclic manner.
+    
+    This is a simplified version that assumes all layers have recurrent connections
+    and possibly projection connections in a cyclic topology.
+    
+    Returns a block diagonal matrix representing the Jacobian of the reservoir dynamics
+    with respect to the reservoir states, which is useful for analyzing stability and dynamics.
+    """
     jacobian_blocks = []
     
     # Extract weight matrices from each layer
@@ -259,7 +256,7 @@ def compute_jacobian_at_equilibrium(model, device, input_size=1, n_steps=50):
             final_state = states[0, -1, :].clone()  # Last time step
         
         # For stability, return a simple approximation based on the weight structure
-        return extract_jacobian_from_reservoir(model, device)
+        return construct_jacobian(model, device)
         
     except Exception as e:
         print(f"    Warning: Failed to compute equilibrium Jacobian: {e}")
@@ -278,11 +275,9 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
     architectures = create_reservoir_architectures()
     results = []
     
-    print("Analizzando diverse architetture di reservoir...")
     print("="*60)
     
     for arch in tqdm(architectures, desc="Analyzing architectures"):
-        print(f"\n🔍 Analizzando: {arch['name']} (ρ={arch['rho']})")
         
         # Reset seeds for each architecture to ensure reproducible results
         torch.manual_seed(42)
@@ -315,14 +310,14 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
                     param.data.fill_(0)
             
             # Extract the effective Jacobian matrix from weights
-            jacobian_matrix = extract_jacobian_from_reservoir(model, device)
+            jacobian_matrix = construct_jacobian(model, device)
             
             # Compute Jacobian at equilibrium
-            print(f"  🧮 Computing Jacobian at equilibrium...")
+            print(f"Computing Jacobian at equilibrium...")
             equilibrium_jacobian = compute_jacobian_at_equilibrium(model, device)
             
             # Compute memory capacity with delay = 2*tot_units
-            print(f"  🧠 Computing memory capacity (delay = 2*{arch['tot_units']} = {2*arch['tot_units']})...")
+            print(f"Computing memory capacity (delay = 2*{arch['tot_units']} = {2*arch['tot_units']})...")
             total_mc, mc_per_delay = compute_memory_capacity(model, device, arch['tot_units'])
             
             if jacobian_matrix is not None:
@@ -356,27 +351,26 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
                 
                 results.append(result)
                 
-                print(f"  ✅ Target ρ: {arch['rho']:.2f} | Actual Weight ρ: {spectral_radius:.6f}")
-                print(f"  ✅ Weight Jacobian - Spectral Norm: {spectral_norm:.6f}")
-                print(f"  ✅ Equilibrium Jacobian - Spectral Radius: {eq_spectral_radius:.6f}")
-                print(f"  ✅ Equilibrium Jacobian - Spectral Norm: {eq_spectral_norm:.6f}")
-                print(f"  ✅ Total Memory Capacity: {total_mc:.4f}")
-                print(f"  ✅ Avg Memory per Delay: {total_mc / len(mc_per_delay) if mc_per_delay else 0.0:.4f}")
+                print(f"Target ρ: {arch['rho']:.2f} | Actual Weight ρ: {spectral_radius:.6f}")
+                print(f"Weight Jacobian - Spectral Norm: {spectral_norm:.6f}")
+                print(f"Equilibrium Jacobian - Spectral Radius: {eq_spectral_radius:.6f}")
+                print(f"Equilibrium Jacobian - Spectral Norm: {eq_spectral_norm:.6f}")
+                print(f"Total Memory Capacity: {total_mc:.4f}")
+                print(f"Avg Memory per Delay: {total_mc / len(mc_per_delay) if mc_per_delay else 0.0:.4f}")
                 print(f"  {'🟢 STABLE' if spectral_radius < 1.0 else '🔴 UNSTABLE'} (ρ = {spectral_radius:.4f})")
             else:
-                print(f"  ❌ Failed to extract Jacobian matrix")
+                print(f"Failed to extract Jacobian matrix")
                 
         except Exception as e:
-            print(f"  ❌ Error analyzing {arch['name']}: {e}")
+            print(f"Error analyzing {arch['name']}: {e}")
             continue
     
     return results
 
 
 def plot_eigenvalues_distribution(results, save_path=None):
-    """Plot 1: Eigenvalues distribution for all configurations."""
     if not results:
-        print("❌ No results to plot")
+        print("No results to plot")
         return None
     
     n_architectures = len(results)
@@ -436,15 +430,14 @@ def plot_eigenvalues_distribution(results, save_path=None):
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"📊 Eigenvalues distribution plot saved to: {save_path}")
+        print(f"Eigenvalues distribution plot saved to: {save_path}")
     
     return fig
 
 
 def plot_memory_capacity_vs_delay(results, save_path=None):
-    """Plot 2: Memory capacity over delay for all configurations."""
     if not results:
-        print("❌ No results to plot")
+        print("No results to plot")
         return None
     
     fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -457,7 +450,6 @@ def plot_memory_capacity_vs_delay(results, save_path=None):
             max_delays.append(max(result['memory_capacity_per_delay'].keys()))
     
     if not max_delays:
-        print("❌ No memory capacity data available")
         return None
     
     max_delay = max(max_delays)
@@ -489,15 +481,14 @@ def plot_memory_capacity_vs_delay(results, save_path=None):
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"📊 Memory capacity vs delay plot saved to: {save_path}")
+        print(f"Memory capacity vs delay plot saved to: {save_path}")
     
     return fig
 
 
 def plot_spectral_properties_vs_configuration(results, save_path=None):
-    """Plot 3: How spectral radius, norm, and Jacobian properties change across configurations."""
+    
     if not results:
-        print("❌ No results to plot")
         return None
     
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
@@ -590,7 +581,7 @@ def plot_spectral_properties_vs_configuration(results, save_path=None):
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"📊 Spectral properties vs configuration plot saved to: {save_path}")
+        print(f"Spectral properties vs configuration plot saved to: {save_path}")
     
     return fig
 
@@ -598,13 +589,10 @@ def plot_spectral_properties_vs_configuration(results, save_path=None):
 
 def run_spectral_analysis():
     """Main function to run the spectral analysis."""
-    print("🚀 Avvio analisi spettrale delle architetture di reservoir...")
     print("="*80)
     
     # Set device - force CPU usage
     device = torch.device("cpu")
-    print(f"🖥️  Dispositivo utilizzato: {device}")
-    
     # Set random seed for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
@@ -612,16 +600,11 @@ def run_spectral_analysis():
     # Run analysis
     results = analyze_reservoir_spectral_properties(device)
     
-    if not results:
-        print("❌ Nessun risultato ottenuto dall'analisi")
-        return
-    
     # Print summary
     print("\n" + "="*120)
-    print("📊 RIASSUNTO COMPLETO ANALISI SPETTRALE")
     print("="*120)
     
-    print(f"{'Architettura':<20} {'L':<3} {'U/L':<4} {'Target ρ':<9} {'Actual ρ':<10} {'Eq ρ':<10} {'MC Total':<10} {'MC Avg':<8} {'Status':<8}")
+    print(f"{'Config':<20} {'L':<3} {'U/L':<4} {'Target ρ':<9} {'Actual ρ':<10} {'Eq ρ':<10} {'MC Total':<10} {'MC Avg':<8} {'Status':<8}")
     print("-" * 120)
     
     for result in results:
@@ -637,34 +620,26 @@ def run_spectral_analysis():
               f"{status:<8}")
     
     # Print detailed analysis
-    print(f"\n📈 ANALISI DETTAGLIATA")
+    print("\nDetailed Analysis:")
     print("="*120)
     
-    print("\n🔍 Stabilità (Spectral Radius < 1):")
+    print("\n Stability (Spectral Radius < 1):")
     stable_weight = sum(1 for r in results if r['spectral_radius'] < 1.0)
     stable_eq = sum(1 for r in results if r['eq_spectral_radius'] < 1.0)
-    print(f"  Weight Jacobian: {stable_weight}/{len(results)} architetture stabili")
-    print(f"  Equilibrium Jacobian: {stable_eq}/{len(results)} architetture stabili")
+    print(f"  Weight Jacobian: {stable_weight}/{len(results)}")
+    print(f"  Equilibrium Jacobian: {stable_eq}/{len(results)}")
     
-    print(f"\n🧠 Memory Capacity:")
+    print(f"\n Memory Capacity:")
     best_mc = max(results, key=lambda r: r['total_memory_capacity'])
     worst_mc = min(results, key=lambda r: r['total_memory_capacity'])
     print(f"  Migliore: {best_mc['architecture']} (MC = {best_mc['total_memory_capacity']:.4f})")
     print(f"  Peggiore: {worst_mc['architecture']} (MC = {worst_mc['total_memory_capacity']:.4f})")
     
-    print(f"\n📊 Correlazioni:")
     mc_values = [r['total_memory_capacity'] for r in results]
     weight_sr = [r['spectral_radius'] for r in results]
     eq_sr = [r['eq_spectral_radius'] for r in results]
     
-    corr_mc_weight = np.corrcoef(mc_values, weight_sr)[0, 1]
-    corr_mc_eq = np.corrcoef(mc_values, eq_sr)[0, 1]
-    
-    print(f"  Memory Capacity vs Weight Spectral Radius: {corr_mc_weight:.4f}")
-    print(f"  Memory Capacity vs Equilibrium Spectral Radius: {corr_mc_eq:.4f}")
-    
-    # Create the three separate plots as requested
-    print("\n📈 Generating the three comprehensive plots...")
+    print("\nPlotting...")
     
     # Plot 1: Eigenvalues distribution for all configurations
     fig1 = plot_eigenvalues_distribution(results, 'eigenvalue_distributions.png')
@@ -683,12 +658,9 @@ def run_spectral_analysis():
     if fig3 is not None:
         plt.show()
     
-    print(f"\n✅ Analysis completed! Generated 3 comprehensive plots:")
-    print(f"  1. 📊 Eigenvalues Distribution: eigenvalue_distributions.png")
-    print(f"  2. 📈 Memory Capacity vs Delay: memory_capacity_vs_delay.png") 
-    print(f"  3. 📉 Spectral Properties vs Configuration: spectral_properties_vs_configuration.png")
-    
-    print(f"\n✅ Analysis completed! Analyzed {len(results)} architectures.")
+    print(f"  1.Eigenvalues Distribution: eigenvalue_distributions.png")
+    print(f"  2.Memory Capacity vs Delay: memory_capacity_vs_delay.png") 
+    print(f"  3.Spectral Properties vs Configuration: spectral_properties_vs_configuration.png")
     
     return results
 
