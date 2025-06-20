@@ -393,14 +393,16 @@ class DeepReservoir(torch.nn.Module):
                         # First layer gets feedback from last layer (closing the ring)
                         prev_layer_output = layer_hidden_states[-1] if len(self.reservoir) > 1 else torch.zeros(batch_size, res_layer.net.units).to(X.device)
                     else:
-                        # Other layers get output from previous layer
                         prev_layer_output = layer_hidden_states[i-1]
                     
-                    # Compute layer output
                     layer_output, layer_hidden = res_layer.net(
                         current_input, 
                         layer_hidden_states[i],  # Previous hidden state of this layer
+                        # TODO Critical change here if we set first_layer=True 
+                        # all layers can receive the cycle input, instead if set to 
+                        # first_layer = (i == 0) only the first layer receives the cycle input
                         first_layer=True,  # All layers can receive cycle input
+                        #first_layer=i == 0,  # Only the first layer is considered the first layer
                         h_last=prev_layer_output  # Ring connection input
                     )
                     
