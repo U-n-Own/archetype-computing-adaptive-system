@@ -36,7 +36,7 @@ from acds.archetypes import (
 parser = argparse.ArgumentParser(description="training parameters")
 
 parser.add_argument("--resultroot", type=str)
-parser.add_argument("--wandb", type=bool, default=False)
+parser.add_argument("--wandb", action="store_true", default=False)
 parser.add_argument("--delay", type=int, default=200)
 parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--esn", action="store_true")

@@ -80,18 +80,19 @@ def train_memory_capacity(config):
     
     # Initialize model with config parameters
     if args.esn:
-        model = DeepReservoir(
+        units_per_layer = int(config["n_hid"]) // (int(config["n_layers"]))
+        model = DeepReservoir(            
             input_size=1,
-            tot_units=args.n_hid,
+            tot_units=int(config["n_hid"]),
             spectral_radius=config["rho"],
             n_layers=int(config["n_layers"]),
-            input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            input_scaling=config["inp_scaling"],
+            inter_scaling=config["inter_scaling"],
             leaky=args.leaky,
             concat=True,
-            connectivity_input=int(args.n_hid / config["n_layers"]),
-            connectivity_inter=int(args.n_hid / config["n_layers"]),
-            connectivity_recurrent=int(args.n_hid / config["n_layers"]),
+            connectivity_input=units_per_layer,
+            connectivity_inter=units_per_layer,
+            connectivity_recurrent=units_per_layer,
             cycle=args.cycle,
         )
     elif args.deepron:
@@ -104,9 +105,10 @@ def train_memory_capacity(config):
             total_units=args.n_hid,
             dt=config["dt"],
             gamma=gamma,
+            concat=True,
             epsilon=epsilon,
             input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            inter_scaling=args.inter_scaling,
             reservoir_scaler=args.inp_scaling,
             connectivity_input=int(args.n_hid / config["n_layers"]),
             connectivity_inter=int(args.n_hid / config["n_layers"]),
@@ -117,9 +119,9 @@ def train_memory_capacity(config):
     # Add other model types as needed
     # Generate input signal
     T = 6000  # Total timesteps
-    train_steps = 5000
+    train_steps = 4000
     valid_steps = 1000
-    washout = 100
+    washout = 1000
     u = np.random.uniform(-0.8, 0.8, (T+args.delay, 1))
     u  = u.astype(np.float64)
     
@@ -147,9 +149,8 @@ def train_memory_capacity(config):
         y_train, y_valid = (targets[:split_idx_train], targets[split_idx_train:split_idx_valid])
         X_train, X_valid = (states[:split_idx_train, :], states[split_idx_train:split_idx_valid, :])
         
-        # remove washout
-        y_train, y_valid = y_train[washout:], y_valid[washout:]
-        X_train, X_valid = X_train[washout:], X_valid[washout:] 
+        # remove washout only to train
+        X_train, y_train = X_train[washout:], y_train[washout:]
         
         # Scaler    
         scaler = preprocessing.StandardScaler().fit(X_train)
@@ -171,7 +172,7 @@ def train_memory_capacity(config):
 def run_hyperparameter_search():
     # Bayesian optimization search 
     
-    search_space = {
+    search_space_ron = {
         "gamma": tune.uniform(1.2, 5),
         "epsilon": tune.uniform(0.6, 0.9),
         "dt": tune.uniform(0.0003, 0.7),
@@ -180,8 +181,23 @@ def run_hyperparameter_search():
         "gamma_range": tune.uniform(0.1, 0.1),
         "epsilon_range": tune.uniform(0.1, 0.1),
         "n_layers": tune.uniform(args.n_layers, args.n_layers),
-        #"inter_scaling": tune.uniform(0.1, 0.2),
+        "inter_scaling": tune.uniform(0.1, 1),
+        "inp_scaling": tune.uniform(0.1, 1),
     }
+    
+    search_space_esn = {
+        "n_hid": tune.uniform(100, 100),
+        "rho": tune.uniform(0.99, 0.99),
+        "alpha": tune.uniform(1e-9, 1e-9),
+        "n_layers": tune.uniform(1, 10),
+        "inter_scaling": tune.uniform(0.1, 1),
+        "inp_scaling": tune.uniform(0.1, 1),
+    }
+
+    if args.deepron:
+        search_space = search_space_ron
+    elif args.esn:
+        search_space = search_space_esn 
 
     if args.bayesian:
         # Configure Bayesian optimization
