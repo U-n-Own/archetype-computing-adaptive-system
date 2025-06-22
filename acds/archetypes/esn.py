@@ -127,10 +127,8 @@ class ReservoirCell(torch.nn.Module):
                 self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
             self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
 
-        # Initialize bias based on cycle mode
         if self.cycle:
             self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
-            # bias to cpu
             self.bias = nn.Parameter(self.bias, requires_grad=False)
             #self.bias = nn.Parameter(torch.zeros(self.units), requires_grad=False)
         else:
@@ -154,7 +152,6 @@ class ReservoirCell(torch.nn.Module):
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         
         if self.cycle and first_layer and h_last is not None:
-
             # Multi unit layer with ring connection
             # h_last should have the same number of units as current layer for ring topology                
             last_hidden_part = torch.mm(h_last, self.projection_kernel.to(dtype=xt.dtype))
@@ -169,14 +166,9 @@ class ReservoirCell(torch.nn.Module):
                 output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
             else:
                 output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
-        # For SCR-like behavior with single units, skip leaky integration
         if self.cycle:
-            # Direct output like SCR
-            # why skip leagky integration?
-            # because we want to keep the original SCR behavior
             return output, output
         else:
-            # Original leaky integration
             leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
             return leaky_output, leaky_output
             
