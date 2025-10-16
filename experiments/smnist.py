@@ -26,7 +26,6 @@ parser.add_argument("--resultsuffix", type=str, default="", help="suffix to appe
 parser.add_argument(
     "--n_hid", type=int, default=256, help="hidden size of recurrent net"
 )
-parser.add_argument("--n_hid_layers", type=str, default="256, 256", help="hidden size of recurrent net")
 parser.add_argument("--batch", type=int, default=1000, help="batch size")
 parser.add_argument(
     "--dt", type=float, default=0.042, help="step size <dt> of the coRNN"
@@ -57,6 +56,7 @@ parser.add_argument("--esn", action="store_true")
 parser.add_argument("--ron", action="store_true")
 parser.add_argument("--pron", action="store_true")
 parser.add_argument("--mspron", action="store_true")
+parser.add_argument("--antisymmetric", action="store_true", help="Use antisymmetric coupling in the reservoir")
 parser.add_argument("--deepron", action="store_true")
 parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="diffusive term")
 parser.add_argument("--inp_scaling", type=float, default=1.0, help="ESN input scaling")
@@ -85,8 +85,6 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-# make sure that n_hid_layers is a list of integers
-args.n_hid_layers = [int(x) for x in args.n_hid_layers.split(",")]
 
 if args.dataroot is None:
     warnings.warn("No dataroot provided. Using current location as default.")
@@ -145,7 +143,10 @@ for i in range(args.trials):
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
-            cycle=True,
+            cycle=False,
+            linear=False,
+            antisymmetric=True,
+            epsilon=0.4,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(

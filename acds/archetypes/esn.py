@@ -27,6 +27,12 @@ class ReservoirCell(torch.nn.Module):
     - :math:`b` is the bias,
     - :math:`\\alpha` is the leaking rate.
 
+    For antisymmetric coupling mode, the equation becomes:
+    
+    .. math::
+        y_l^{(t)} = \\tanh(W_{in}^{(l)} u^{(t)} + W_{rec}^{(l)} h_l^{(t-1)} + 
+        W_{proj} h_L^{(t-1)} + \\epsilon (C_{l-1} h_{l-1}^{(t-1)} - C_l^T h_{l+1}^{(t-1)}))
+
     The implementation is derivated from the one in https://github.com/gallicch/DeepRC-TF/blob/master/DeepRC.py
 
     If you use this code in your work, please cite the following paper, in which the
@@ -49,6 +55,8 @@ class ReservoirCell(torch.nn.Module):
         connectivity_recurrent: int = 10,
         cycle: bool = False,
         linear: bool = False,
+        antisymmetric: bool = False,
+        epsilon: float = 0.1,
     ):
         """Initializes the ReservoirCell.
 
@@ -66,6 +74,10 @@ class ReservoirCell(torch.nn.Module):
                 input unit to the reservoir. Defaults to 10.
             connectivity_recurrent (int): number of incoming recurrent connections
                 for each reservoir unit. Defaults to 10.
+            cycle (bool): whether to use cycle connections. Defaults to False.
+            linear (bool): whether to use linear activation. Defaults to False.
+            antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
+            epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
 
@@ -80,6 +92,8 @@ class ReservoirCell(torch.nn.Module):
         self.connectivity_recurrent = connectivity_recurrent
         self.cycle = cycle
         self.linear = linear
+        self.antisymmetric = antisymmetric
+        self.epsilon = epsilon
         
         
         if self.cycle:
@@ -136,7 +150,21 @@ class ReservoirCell(torch.nn.Module):
             self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
             self.bias = nn.Parameter(self.bias, requires_grad=False)
 
-    def forward(self, xt: torch.Tensor, h_prev: torch.Tensor, first_layer: bool = False, h_last: Optional[torch.Tensor] = None):
+        # Initialize antisymmetric coupling matrices if enabled
+        if self.antisymmetric:
+            # Create a single coupling matrix C for antisymmetric coupling
+            # This will be used as C for backward coupling and -C^T for forward coupling
+            # Matrix should be square with dimension equal to the number of units
+            C_base = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
+            self.C_coupling = nn.Parameter(C_base, requires_grad=False)
+            
+            # For convenience, also store -C^T
+            self.C_coupling_T_neg = nn.Parameter(-C_base.T, requires_grad=False)
+        else:
+            self.C_coupling = None
+            self.C_coupling_T_neg = None
+
+    def forward(self, xt: torch.Tensor, h_prev: torch.Tensor, first_layer: bool = False, h_last: Optional[torch.Tensor] = None, h_prev_layer: Optional[torch.Tensor] = None, h_next_layer: Optional[torch.Tensor] = None):
         """Computes the output of the cell given the input and previous state.
 
         Args:
@@ -144,6 +172,8 @@ class ReservoirCell(torch.nn.Module):
             h_prev (torch.Tensor): previous state tensor shaped as (batch, state_dim).
             first_layer (bool): whether this is the first layer in the stack.
             h_last (torch.Tensor): feedback from the last layer for cycle connections.
+            h_prev_layer (torch.Tensor): hidden state from previous layer for antisymmetric coupling.
+            h_next_layer (torch.Tensor): hidden state from next layer for antisymmetric coupling.
         Returns:
             torch.Tensor: output to next layer shaped as (batch, state_dim).
             torch.Tensor: hidden state tensor shaped as (batch, state_dim).
@@ -151,21 +181,40 @@ class ReservoirCell(torch.nn.Module):
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         
+        # Initialize the total input as standard terms
+        total_input = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
+        
+        # Add cycle connection if enabled
         if self.cycle and first_layer and h_last is not None:
             # Multi unit layer with ring connection
             # h_last should have the same number of units as current layer for ring topology                
             last_hidden_part = torch.mm(h_last, self.projection_kernel.to(dtype=xt.dtype))
+            total_input = total_input + last_hidden_part.to(dtype=xt.dtype)
+        
+        # Add antisymmetric coupling if enabled
+        if self.antisymmetric:
+            antisymmetric_part = torch.zeros_like(total_input)
             
-            if self.linear:
-                output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype)
-            else:    
-                output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype) + last_hidden_part.to(dtype=xt.dtype))
+            # Backward coupling: C * h_{l-1}^{(t-1)}
+            if h_prev_layer is not None and self.C_coupling is not None:
+                backward_coupling = torch.mm(h_prev_layer.to(dtype=xt.dtype), self.C_coupling.to(dtype=xt.dtype))
+                antisymmetric_part = antisymmetric_part + backward_coupling
+            
+            # Forward coupling: -C^T * h_{l+1}^{(t-1)}
+            if h_next_layer is not None and self.C_coupling_T_neg is not None:
+                forward_coupling = torch.mm(h_next_layer.to(dtype=xt.dtype), self.C_coupling_T_neg.to(dtype=xt.dtype))
+                antisymmetric_part = antisymmetric_part + forward_coupling  # Already negative in C_coupling_T_neg
+            
+            # Scale by epsilon and add to total input
+            total_input = total_input + self.epsilon * antisymmetric_part
+        
+        # Apply activation function
+        if self.linear:
+            output = total_input
         else:
-            # Standard behavior: no cycle connection
-            if self.linear:
-                output = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
-            else:
-                output = torch.tanh(input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype))
+            output = torch.tanh(total_input)
+            
+        # Apply leaky integration if not in cycle mode
         if self.cycle:
             return output, output
         else:
@@ -191,6 +240,8 @@ class ReservoirLayer(torch.nn.Module):
         connectivity_recurrent: int = 10,
         cycle: bool = False,
         linear: bool = False,
+        antisymmetric: bool = False,
+        epsilon: float = 0.1,
     ):
         """Initializes the ReservoirLayer.
 
@@ -207,6 +258,10 @@ class ReservoirLayer(torch.nn.Module):
                 input unit to the reservoir. Defaults to 10.
             connectivity_recurrent (int): number of incoming recurrent connections
                 for each reservoir unit. Defaults to 10.
+            cycle (bool): whether to use cycle connections. Defaults to False.
+            linear (bool): whether to use linear activation. Defaults to False.
+            antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
+            epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
         self.net = ReservoirCell(
@@ -220,6 +275,8 @@ class ReservoirLayer(torch.nn.Module):
             connectivity_recurrent,
             cycle,
             linear,
+            antisymmetric,
+            epsilon,
         )
 
     def init_hidden(self, batch_size: int):
@@ -280,6 +337,8 @@ class DeepReservoir(torch.nn.Module):
         connectivity_inter: int = 10,
         cycle: bool = False,
         linear: bool = False,
+        antisymmetric: bool = False,
+        epsilon: float = 0.1,
     ):
         """Initializes the DeepReservoir.
 
@@ -304,6 +363,10 @@ class DeepReservoir(torch.nn.Module):
                 input unit to the reservoir. Defaults to 10.
             connectivity_inter (int): number of outgoing connections from each
                 reservoir unit to the next layer. Defaults to 10.
+            cycle (bool): whether to use cycle connections. Defaults to False.
+            linear (bool): whether to use linear activation. Defaults to False.
+            antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
+            epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
         self.n_layers = n_layers
@@ -311,6 +374,8 @@ class DeepReservoir(torch.nn.Module):
         self.concat = concat
         self.cycle = cycle
         self.linear = linear
+        self.antisymmetric = antisymmetric
+        self.epsilon = epsilon
         self.batch_first = True  # DeepReservoir only supports batch_first
         # in case in which all the reservoir layers are concatenated, each level
         # contains units/layers neurons. This is done to keep the number of
@@ -339,7 +404,9 @@ class DeepReservoir(torch.nn.Module):
                 connectivity_recurrent=connectivity_recurrent,
                 last_hidden_size=self.layers_units,
                 cycle=cycle,
-                linear=linear
+                linear=linear,
+                antisymmetric=antisymmetric,
+                epsilon=epsilon,
             )
         ]
 
@@ -363,19 +430,69 @@ class DeepReservoir(torch.nn.Module):
                     connectivity_recurrent=connectivity_recurrent,
                     last_hidden_size=self.layers_units,
                     cycle=cycle,
-                    linear=linear,  
+                    linear=linear,
+                    antisymmetric=antisymmetric,
+                    epsilon=epsilon,
                 )
             )
             last_h_size = self.layers_units
         self.reservoir = torch.nn.ModuleList(reservoir_layers)
 
     def forward(self, X: torch.Tensor):
-        """Forward pass with support for multi-unit ring connectivity."""
+        """Forward pass with support for multi-unit ring connectivity and antisymmetric coupling."""
         states = []
         states_last = []
         batch_size, seq_len, _ = X.shape
         
-        if self.cycle:
+        if self.antisymmetric:
+            # Antisymmetric coupling mode - requires layer interaction at each timestep
+            # Initialize hidden states for each layer
+            layer_hidden_states = []
+            for i, res_layer in enumerate(self.reservoir):
+                layer_hidden_states.append(torch.zeros(batch_size, res_layer.net.units).to(X.device))
+            
+            layer_states = [[] for _ in range(len(self.reservoir))]
+            
+            for t in range(seq_len):
+                # For antisymmetric coupling, use standard input propagation
+                # but layers need to know about their neighbors for coupling
+                current_input = X[:, t, :] if t == 0 else None  # Only first layer gets external input
+                new_hidden_states = []
+                
+                for i, res_layer in enumerate(self.reservoir):
+                    # Prepare layer input: first layer gets external input, others get previous layer output
+                    if i == 0:
+                        layer_input = X[:, t, :]
+                    else:
+                        # Use previous layer's current output (from this timestep)
+                        layer_input = new_hidden_states[i-1]
+                    
+                    # Prepare antisymmetric coupling inputs (from previous timestep)
+                    h_prev_layer = layer_hidden_states[i-1] if i > 0 else None
+                    h_next_layer = layer_hidden_states[i+1] if i < len(self.reservoir) - 1 else None
+                    
+                    # Forward through the layer with antisymmetric coupling
+                    layer_output, layer_hidden = res_layer.net(
+                        layer_input,
+                        layer_hidden_states[i],  # Previous hidden state of this layer
+                        first_layer=(i == 0),
+                        h_last=None,  # No cycle connections in antisymmetric mode
+                        h_prev_layer=h_prev_layer,  # Previous layer state for antisymmetric coupling
+                        h_next_layer=h_next_layer   # Next layer state for antisymmetric coupling
+                    )
+                    
+                    new_hidden_states.append(layer_hidden)
+                    layer_states[i].append(layer_output)
+                
+                # Update hidden states for next timestep
+                layer_hidden_states = new_hidden_states
+            
+            for i in range(len(self.reservoir)):
+                stacked_states = torch.stack(layer_states[i], dim=1)
+                states.append(stacked_states)
+                states_last.append(stacked_states[:, -1, :])
+                
+        elif self.cycle:
             # Initialize hidden states for each layer
             layer_hidden_states = []
             for i, res_layer in enumerate(self.reservoir):

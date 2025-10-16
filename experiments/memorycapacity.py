@@ -206,7 +206,7 @@ for t in range(args.trials):
             n_layers=args.n_layers,
             concat=args.concat,
             spectral_radius=args.rho,
-            inter_scaling=args.inp_scaling,
+            inter_scaling=args.inter_scaling,
             input_scaling=args.inp_scaling,
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
             connectivity_recurrent=units_per_layer,
@@ -245,9 +245,11 @@ for t in range(args.trials):
             reservoir_scaler=args.inp_scaling,
             device=device,
             connectivity_input=int(args.n_hid / args.n_layers),
-            connectivity_inter=int(args.n_hid / args.n_layers),
+            #connectivity_inter=int(args.n_hid / args.n_layers),
+            connectivity_inter=1,
             concat=args.concat,
             cycle=args.cycle,
+            linear=True,
         ).to(device)
         
     else:
