@@ -308,6 +308,178 @@ def connection_mode_search(X_train, y_train, X_valid, y_valid, device, n_inp,
     return best_config, all_results
 
 
+def plot_predictions(models_dict, X_test, y_test, class_names, device, save_dir="./plots/speech_antisym_vs_cycle"):
+    """
+    Plot example predictions showing reservoir states evolution over time
+    Shows how both models process time series data
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Select a few test samples from different classes
+    n_examples = 6
+    selected_indices = []
+    selected_classes = np.random.choice(len(class_names), min(n_examples, len(class_names)), replace=False)
+    
+    for cls in selected_classes:
+        cls_indices = np.where(y_test == cls)[0]
+        if len(cls_indices) > 0:
+            selected_indices.append(np.random.choice(cls_indices))
+    
+    fig, axes = plt.subplots(len(selected_indices), 3, figsize=(18, 4 * len(selected_indices)))
+    if len(selected_indices) == 1:
+        axes = axes.reshape(1, -1)
+    
+    for idx, sample_idx in enumerate(selected_indices):
+        X_sample = X_test[sample_idx:sample_idx+1]
+        y_true = y_test[sample_idx]
+        true_label = class_names[int(y_true)]
+        
+        X_tensor = torch.tensor(X_sample, dtype=torch.float32).to(device)
+        
+        # Plot input signal
+        ax = axes[idx, 0]
+        ax.imshow(X_sample[0].T, aspect='auto', cmap='viridis', interpolation='nearest')
+        ax.set_xlabel('Time Step', fontsize=10)
+        ax.set_ylabel('Feature Dim', fontsize=10)
+        ax.set_title(f'Input: "{true_label}"', fontsize=11, fontweight='bold')
+        ax.grid(False)
+        
+        # Process with both models
+        for col, (mode_name, model_info) in enumerate([('Antisymmetric', models_dict['antisymmetric']), 
+                                                         ('Cycle', models_dict['cycle'])], start=1):
+            model = model_info['model']
+            classifier = model_info['classifier']
+            scaler = model_info['scaler']
+            
+            with torch.no_grad():
+                output = model(X_tensor)
+                if isinstance(output, tuple):
+                    states = output[0]  # (1, time, features)
+                    last_hidden = output[1]
+                else:
+                    states = output
+                    last_hidden = states[:, -1, :]
+                
+                # Get final state for prediction
+                if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
+                    final_state = last_hidden[-1].cpu().numpy()
+                else:
+                    final_state = last_hidden.cpu().numpy()
+                
+                # Predict
+                final_state_scaled = scaler.transform(final_state)
+                y_pred = classifier.predict(final_state_scaled)[0]
+                y_proba = classifier.predict_proba(final_state_scaled)[0]
+                pred_label = class_names[int(y_pred)]
+                confidence = y_proba[int(y_pred)]
+                
+                # Plot reservoir states evolution
+                states_np = states.cpu().numpy()[0]  # (time, features)
+                
+                ax = axes[idx, col]
+                im = ax.imshow(states_np.T, aspect='auto', cmap='coolwarm', interpolation='nearest')
+                ax.set_xlabel('Time Step', fontsize=10)
+                ax.set_ylabel('Reservoir Units', fontsize=10)
+                
+                # Color code title based on correct/incorrect prediction
+                color = 'green' if y_pred == y_true else 'red'
+                ax.set_title(f'{mode_name}\nPred: "{pred_label}" ({confidence:.2f})', 
+                           fontsize=11, fontweight='bold', color=color)
+                ax.grid(False)
+                
+                # Add colorbar
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    
+    plt.tight_layout()
+    filename = f"{save_dir}/prediction_examples.png"
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"✓ Prediction examples saved: {filename}")
+    plt.close()
+
+
+def plot_state_statistics(models_dict, X_test, y_test, class_names, device, save_dir="./plots/speech_antisym_vs_cycle"):
+    """
+    Plot statistics of reservoir states for both models
+    Shows activation patterns and dynamics
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Collect states from a subset of test data
+    n_samples = min(100, len(X_test))
+    X_subset = X_test[:n_samples]
+    y_subset = y_test[:n_samples]
+    
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    
+    for row, (mode_name, model_info) in enumerate([('Antisymmetric', models_dict['antisymmetric']),
+                                                     ('Cycle', models_dict['cycle'])]):
+        model = model_info['model']
+        
+        all_states = []
+        all_final_states = []
+        
+        X_tensor = torch.tensor(X_subset, dtype=torch.float32).to(device)
+        batch_size = 32
+        
+        with torch.no_grad():
+            for i in range(0, len(X_subset), batch_size):
+                batch_X = X_tensor[i:i+batch_size]
+                output = model(batch_X)
+                
+                if isinstance(output, tuple):
+                    states = output[0]
+                    last_hidden = output[1]
+                else:
+                    states = output
+                    last_hidden = states[:, -1, :]
+                
+                all_states.append(states.cpu().numpy())
+                
+                if isinstance(last_hidden, list) or isinstance(last_hidden, tuple):
+                    final_state = last_hidden[-1].cpu().numpy()
+                else:
+                    final_state = last_hidden.cpu().numpy()
+                all_final_states.append(final_state)
+        
+        all_states = np.concatenate(all_states, axis=0)  # (n_samples, time, features)
+        all_final_states = np.concatenate(all_final_states, axis=0)  # (n_samples, features)
+        
+        # 1. Mean activation over time
+        mean_activation = np.mean(np.abs(all_states), axis=(0, 2))  # Average over samples and features
+        ax = axes[row, 0]
+        ax.plot(mean_activation, linewidth=2, color='coral' if row == 0 else 'skyblue')
+        ax.set_xlabel('Time Step', fontsize=11)
+        ax.set_ylabel('Mean |Activation|', fontsize=11)
+        ax.set_title(f'{mode_name} - Activation Evolution', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3)
+        
+        # 2. Final state distribution
+        ax = axes[row, 1]
+        ax.hist(all_final_states.flatten(), bins=50, alpha=0.7, edgecolor='black',
+                color='coral' if row == 0 else 'skyblue')
+        ax.set_xlabel('Final State Value', fontsize=11)
+        ax.set_ylabel('Frequency', fontsize=11)
+        ax.set_title(f'{mode_name} - Final State Distribution', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3)
+        
+        # 3. State variance over time
+        state_variance = np.var(all_states, axis=(0, 2))  # Variance over samples and features
+        ax = axes[row, 2]
+        ax.plot(state_variance, linewidth=2, color='coral' if row == 0 else 'skyblue')
+        ax.set_xlabel('Time Step', fontsize=11)
+        ax.set_ylabel('Variance', fontsize=11)
+        ax.set_title(f'{mode_name} - State Variance Evolution', fontsize=12, fontweight='bold')
+        ax.grid(alpha=0.3)
+    
+    plt.suptitle('Reservoir State Analysis: Antisymmetric vs Cycle', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    filename = f"{save_dir}/state_statistics.png"
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"✓ State statistics saved: {filename}")
+    plt.close()
+
+
 def plot_comparison(antisymmetric_results, cycle_results, n_layers, save_dir="./plots/speech_antisym_vs_cycle"):
     """Plot comprehensive comparison between antisymmetric and cycle modes"""
     os.makedirs(save_dir, exist_ok=True)
@@ -586,10 +758,12 @@ if __name__ == "__main__":
     # Plot comparison
     plot_comparison(anti_results, cycle_results, args.n_layers, save_dir)
     
-    # Optional: Test on test set with best configs
+    # Test on test set with best configs and save models
     print("\n" + "="*70)
     print("EVALUATION ON TEST SET WITH BEST CONFIGS")
     print("="*70)
+    
+    models_dict = {}
     
     for mode, config in [('Antisymmetric', best_anti_config), ('Cycle', best_cycle_config)]:
         print(f"\n{mode} mode:")
@@ -656,6 +830,26 @@ if __name__ == "__main__":
         
         test_acc = test(model, X_test, y_test, scaler, classifier, device)
         print(f"  Test Accuracy: {test_acc:.4f} ({test_acc*100:.2f}%)")
+        
+        # Store model and components for visualization
+        mode_key = 'antisymmetric' if mode == 'Antisymmetric' else 'cycle'
+        models_dict[mode_key] = {
+            'model': model,
+            'classifier': classifier,
+            'scaler': scaler,
+            'test_acc': test_acc
+        }
+    
+    # Generate prediction visualizations
+    print("\n" + "="*70)
+    print("GENERATING PREDICTION VISUALIZATIONS")
+    print("="*70)
+    
+    print("\nCreating prediction examples...")
+    plot_predictions(models_dict, X_test, y_test, class_names, device, save_dir)
+    
+    print("Creating state statistics plots...")
+    plot_state_statistics(models_dict, X_test, y_test, class_names, device, save_dir)
     
     print(f"\n{'='*70}")
     print("✅ COMPARISON COMPLETE!")
