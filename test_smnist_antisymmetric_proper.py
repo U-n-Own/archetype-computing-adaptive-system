@@ -15,10 +15,12 @@ from acds.benchmarks.mnist import get_mnist_data
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from sklearn.decomposition import PCA
+from sklearn.model_selection import ParameterGrid
 from tqdm import tqdm
 import time
 import matplotlib.pyplot as plt
 import seaborn as sns
+import json
 
 # Set style for better-looking plots
 sns.set_style("whitegrid")
@@ -195,7 +197,186 @@ def plot_improvement_breakdown(results, save_dir="./plots"):
     print(f"Saved: {save_dir}/improvement_breakdown.png")
     plt.close()
 
-def test_smnist_antisymmetric():
+def hyperparameter_search(train_loader, valid_loader, device, antisymmetric=False, n_configs=10):
+    """Perform hyperparameter search for ESN"""
+    print(f"\n{'='*60}")
+    print(f"HYPERPARAMETER SEARCH ({'Antisymmetric' if antisymmetric else 'Standard'} ESN)")
+    print(f"{'='*60}")
+    
+    # Define hyperparameter grid
+    param_grid = {
+        'spectral_radius': [0.9, 0.95, 0.99, 0.999],
+        'leaky': [0.001, 0.01, 0.1, 0.5],
+        'input_scaling': [0.1, 0.5, 1.0, 2.0],
+        'tot_units': [100],
+        'epsilon': [0.05, 0.1, 0.2, 0.4] if antisymmetric else [0.0],
+    }
+    
+    # Create parameter combinations
+    all_params = list(ParameterGrid(param_grid))
+    
+    # Randomly sample n_configs if there are too many
+    if len(all_params) > n_configs:
+        import random
+        random.seed(42)
+        sampled_params = random.sample(all_params, n_configs)
+    else:
+        sampled_params = all_params
+    
+    print(f"Testing {len(sampled_params)} hyperparameter configurations...")
+    
+    best_config = None
+    best_valid_acc = 0.0
+    all_results = []
+    
+    for idx, params in enumerate(sampled_params):
+        print(f"\n[{idx+1}/{len(sampled_params)}] Testing config: {params}")
+        
+        try:
+            # Create ESN with current hyperparameters
+            unit_per_layer = params['tot_units']
+            model = DeepReservoir(
+                input_size=1,
+                tot_units=params['tot_units'],
+                n_layers=10,
+                concat=True,
+                spectral_radius=params['spectral_radius'],
+                input_scaling=params['input_scaling'],
+                leaky=params['leaky'],
+                connectivity_recurrent=unit_per_layer,
+                connectivity_input=unit_per_layer,
+                connectivity_inter=unit_per_layer,
+                antisymmetric=antisymmetric,
+                epsilon=params.get('epsilon', 0.0),
+                cycle=False,
+                linear=False,
+            ).to(device)
+            
+            # Generate training activations
+            activations, ys = [], []
+            start_time = time.time()
+            
+            for images, labels in train_loader:
+                images = images.to(device)
+                images = images.view(images.shape[0], -1).unsqueeze(-1)
+                with torch.no_grad():
+                    output = model(images)[0]
+                    if len(output.shape) == 3:
+                        output = output[:, -1, :]
+                activations.append(output.cpu())
+                ys.append(labels)
+            
+            train_time = time.time() - start_time
+            
+            activations = torch.cat(activations, dim=0).numpy()
+            ys = torch.cat(ys, dim=0).squeeze().numpy()
+            
+            # Train classifier
+            scaler = preprocessing.StandardScaler().fit(activations)
+            activations_scaled = scaler.transform(activations)
+            classifier = LogisticRegression(max_iter=1000, verbose=0).fit(activations_scaled, ys)
+            
+            # Evaluate on validation set
+            valid_acc = test(valid_loader, model, classifier, scaler, device)
+            
+            result = {
+                'params': params,
+                'valid_acc': valid_acc,
+                'train_time': train_time
+            }
+            all_results.append(result)
+            
+            print(f"  Valid Accuracy: {valid_acc:.4f} | Time: {train_time:.2f}s")
+            
+            # Track best configuration
+            if valid_acc > best_valid_acc:
+                best_valid_acc = valid_acc
+                best_config = params.copy()
+                print(f"  ✨ New best config! Valid Acc: {best_valid_acc:.4f}")
+            
+        except Exception as e:
+            print(f"  ❌ Error with config: {e}")
+            continue
+    
+    # Summary
+    print(f"\n{'='*60}")
+    print("HYPERPARAMETER SEARCH SUMMARY")
+    print(f"{'='*60}")
+    print(f"Best Validation Accuracy: {best_valid_acc:.4f}")
+    print(f"Best Configuration:")
+    for key, value in best_config.items():
+        print(f"  {key}: {value}")
+    
+    # Sort results by validation accuracy
+    all_results.sort(key=lambda x: x['valid_acc'], reverse=True)
+    
+    print(f"\nTop 5 Configurations:")
+    for i, result in enumerate(all_results[:5], 1):
+        print(f"{i}. Valid Acc: {result['valid_acc']:.4f} | Params: {result['params']}")
+    
+    return best_config, all_results
+
+def plot_hyperparameter_results(results, antisymmetric, save_dir="./plots"):
+    """Plot hyperparameter search results"""
+    os.makedirs(save_dir, exist_ok=True)
+    
+    mode_name = "Antisymmetric" if antisymmetric else "Standard"
+    
+    # Extract data
+    valid_accs = [r['valid_acc'] for r in results]
+    train_times = [r['train_time'] for r in results]
+    
+    # Create subplots
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # 1. Validation accuracy distribution
+    axes[0, 0].hist(valid_accs, bins=20, edgecolor='black', alpha=0.7, color='steelblue')
+    axes[0, 0].axvline(np.mean(valid_accs), color='red', linestyle='--', 
+                       label=f'Mean: {np.mean(valid_accs):.4f}')
+    axes[0, 0].set_xlabel('Validation Accuracy', fontsize=11)
+    axes[0, 0].set_ylabel('Frequency', fontsize=11)
+    axes[0, 0].set_title(f'{mode_name} ESN - Valid Acc Distribution', 
+                         fontsize=12, fontweight='bold')
+    axes[0, 0].legend()
+    axes[0, 0].grid(alpha=0.3)
+    
+    # 2. Accuracy vs Training Time
+    axes[0, 1].scatter(train_times, valid_accs, alpha=0.6, s=50, c=valid_accs, 
+                       cmap='viridis', edgecolors='black')
+    axes[0, 1].set_xlabel('Training Time (s)', fontsize=11)
+    axes[0, 1].set_ylabel('Validation Accuracy', fontsize=11)
+    axes[0, 1].set_title(f'{mode_name} ESN - Accuracy vs Time', 
+                         fontsize=12, fontweight='bold')
+    axes[0, 1].grid(alpha=0.3)
+    
+    # 3. Spectral radius effect
+    spectral_radii = [r['params']['spectral_radius'] for r in results]
+    axes[1, 0].scatter(spectral_radii, valid_accs, alpha=0.6, s=50, 
+                       c=valid_accs, cmap='viridis', edgecolors='black')
+    axes[1, 0].set_xlabel('Spectral Radius', fontsize=11)
+    axes[1, 0].set_ylabel('Validation Accuracy', fontsize=11)
+    axes[1, 0].set_title(f'{mode_name} ESN - Effect of Spectral Radius', 
+                         fontsize=12, fontweight='bold')
+    axes[1, 0].grid(alpha=0.3)
+    
+    # 4. Leaky rate effect
+    leaky_rates = [r['params']['leaky'] for r in results]
+    axes[1, 1].scatter(leaky_rates, valid_accs, alpha=0.6, s=50, 
+                       c=valid_accs, cmap='viridis', edgecolors='black')
+    axes[1, 1].set_xlabel('Leaky Rate', fontsize=11)
+    axes[1, 1].set_ylabel('Validation Accuracy', fontsize=11)
+    axes[1, 1].set_title(f'{mode_name} ESN - Effect of Leaky Rate', 
+                         fontsize=12, fontweight='bold')
+    axes[1, 1].set_xscale('log')
+    axes[1, 1].grid(alpha=0.3)
+    
+    plt.tight_layout()
+    filename = f"{save_dir}/hyperparam_search_{mode_name.lower()}.png"
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"Saved: {filename}")
+    plt.close()
+
+def test_smnist_antisymmetric(with_hyperparam_search=False, n_search_configs=10):
     """Test antisymmetric coupling on sMNIST dataset"""
     print("Testing Antisymmetric Coupling on sMNIST...")
     print("Following the same data processing as experiments/smnist.py")
@@ -219,17 +400,55 @@ def test_smnist_antisymmetric():
     
     print(f"Data loaded with batch size: {batch_size}")
     
-    # ESN configuration with perfectly divisible units
-    esn_config = {
-        'input_size': 1,           # Each pixel is fed sequentially
-        'tot_units': 500,          # Total units (reduced for faster testing)
-        'n_layers': 1,             # 1 layer for baseline comparison
-        'concat': True,            # Concatenate all layer outputs
-        'spectral_radius': 0.999,
-        'input_scaling': 1,
-        'leaky': 0.001,
-
-    }
+    # Perform hyperparameter search if requested
+    best_configs = {}
+    if with_hyperparam_search:
+        print("\n" + "="*70)
+        print("PHASE 1: HYPERPARAMETER SEARCH")
+        print("="*70)
+        
+        # Search for standard ESN
+        best_std_config, std_results = hyperparameter_search(
+            train_loader, valid_loader, device, 
+            antisymmetric=False, n_configs=n_search_configs
+        )
+        best_configs['Standard'] = best_std_config
+        plot_hyperparameter_results(std_results, False, save_dir)
+        
+        # Search for antisymmetric ESN
+        best_anti_config, anti_results = hyperparameter_search(
+            train_loader, valid_loader, device, 
+            antisymmetric=True, n_configs=n_search_configs
+        )
+        best_configs['Antisymmetric'] = best_anti_config
+        plot_hyperparameter_results(anti_results, True, save_dir)
+        
+        # Save best configs to file
+        with open(f"{save_dir}/best_configs.json", 'w') as f:
+            json.dump(best_configs, f, indent=2)
+        print(f"\nBest configurations saved to: {save_dir}/best_configs.json")
+        
+        print("\n" + "="*70)
+        print("PHASE 2: FULL EVALUATION WITH BEST CONFIGS")
+        print("="*70)
+    else:
+        # Use default configuration
+        best_configs = {
+            'Standard': {
+                'spectral_radius': 0.999,
+                'input_scaling': 1.0,
+                'leaky': 0.001,
+                'tot_units': 500,
+                'epsilon': 0.0
+            },
+            'Antisymmetric': {
+                'spectral_radius': 0.999,
+                'input_scaling': 1.0,
+                'leaky': 0.001,
+                'tot_units': 500,
+                'epsilon': 0.4
+            }
+        }
     
     # Test both standard and antisymmetric ESN
     results = {}
@@ -241,17 +460,28 @@ def test_smnist_antisymmetric():
         print(f"Testing {mode} ESN")
         print(f"{'='*50}")
         
-        unit_per_layer = esn_config['tot_units'] // esn_config['n_layers']
+        # Get configuration for this mode
+        config = best_configs[mode]
+        tot_units = config['tot_units']
+        unit_per_layer = tot_units
         
-        # Create ESN
+        print(f"Using configuration: {config}")
+        
+        # Create ESN with best hyperparameters
         model = DeepReservoir(
-            **esn_config,
-            antisymmetric=antisymmetric,
-            epsilon=0.4 if antisymmetric else 0.0,
-            cycle=False,
+            input_size=1,
+            tot_units=tot_units,
+            n_layers=1,
+            concat=True,
+            spectral_radius=config['spectral_radius'],
+            input_scaling=config['input_scaling'],
+            leaky=config['leaky'],
             connectivity_recurrent=unit_per_layer,
             connectivity_input=unit_per_layer,
             connectivity_inter=unit_per_layer,
+            antisymmetric=antisymmetric,
+            epsilon=config['epsilon'],
+            cycle=False,
             linear=False,
         ).to(device)
         
@@ -349,4 +579,17 @@ def test_smnist_antisymmetric():
     return results
 
 if __name__ == "__main__":
-    test_smnist_antisymmetric()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Test antisymmetric ESN on sMNIST')
+    parser.add_argument('--hypersearch', action='store_true', 
+                       help='Perform hyperparameter search before evaluation')
+    parser.add_argument('--n_configs', type=int, default=15,
+                       help='Number of configurations to test in hyperparameter search')
+    
+    args = parser.parse_args()
+    
+    test_smnist_antisymmetric(
+        with_hyperparam_search=args.hypersearch,
+        n_search_configs=args.n_configs
+    )
