@@ -332,9 +332,12 @@ def main():
     
     # Get sample for visualizations
     for images, labels in test_loader:
+        # Images from loader are (batch, 1, 28, 28)
+        # Need to reshape to (batch, 784, 1) for ESN input
         sample_images = images[:1].view(1, -1, 1)
         sample_labels = labels[:1]
-        X_test_batch = images.numpy()
+        # Reshape all test batch for plotting
+        X_test_batch = images.view(images.shape[0], -1, 1).numpy()
         y_test_batch = labels.numpy()
         break
     
