@@ -242,11 +242,15 @@ def plot_predictions(
         selected_indices = np.random.choice(len(X_test), n_examples, replace=False)
     
     n_samples = len(selected_indices)
-    fig, axes = plt.subplots(n_samples, 3, figsize=(15, 4 * n_samples))
+    # Create 4 columns: Input, Mode1 States, Mode2 States, Predictions Comparison
+    fig, axes = plt.subplots(n_samples, 4, figsize=(20, 4 * n_samples))
     if n_samples == 1:
         axes = axes.reshape(1, -1)
     
     mode_keys = list(models_dict.keys())
+    
+    # Store predictions for comparison column
+    all_predictions = {}
     
     for idx, sample_idx in enumerate(selected_indices):
         X_sample = X_test[sample_idx:sample_idx+1]
@@ -269,17 +273,21 @@ def plot_predictions(
         # Plot input
         ax = axes[idx, 0]
         if len(X_sample.shape) == 3:
-            # Time series data: (1, time, features)
-            ax.imshow(X_sample[0].T, aspect='auto', cmap='viridis', interpolation='nearest')
+            # Time series data: (1, time, features) - e.g., speech spectrogram
+            # Display with better interpolation for smooth spectrograms
+            im_input = ax.imshow(X_sample[0].T, aspect='auto', cmap='magma', 
+                                 interpolation='bilinear', origin='lower')
             ax.set_xlabel('Time Step', fontsize=10)
             ax.set_ylabel('Feature Dim', fontsize=10)
+            plt.colorbar(im_input, ax=ax, fraction=0.046, pad=0.04)
+            ax.grid(False)  # Remove grid for cleaner spectrogram view
         elif len(X_sample.shape) == 2:
             # Could be flattened image
             # Try to reshape to square
             total_pixels = X_sample.shape[1]
             side = int(np.sqrt(total_pixels))
             if side * side == total_pixels:
-                ax.imshow(X_sample.reshape(side, side), cmap='gray')
+                ax.imshow(X_sample.reshape(side, side), cmap='gray', interpolation='bilinear')
                 ax.axis('off')
             else:
                 ax.plot(X_sample[0])
@@ -287,9 +295,9 @@ def plot_predictions(
         
         if class_names:
             true_label = class_names[int(y_true)]
-            ax.set_title(f'True: "{true_label}"', fontsize=11, fontweight='bold')
+            ax.set_title(f'Input: "{true_label}"', fontsize=11, fontweight='bold')
         else:
-            ax.set_title(f'True: {y_true:.4f}', fontsize=11, fontweight='bold')
+            ax.set_title(f'Input: {y_true:.4f}', fontsize=11, fontweight='bold')
         
         # Process with both models
         for col, mode_key in enumerate(mode_keys[:2], start=1):
@@ -321,24 +329,41 @@ def plot_predictions(
                     confidence = y_proba[int(y_pred)]
                 else:
                     confidence = None
+                    y_proba = None
+                
+                # Store predictions for comparison plot
+                if mode_key not in all_predictions:
+                    all_predictions[mode_key] = {}
+                all_predictions[mode_key][idx] = {
+                    'y_pred': y_pred,
+                    'y_proba': y_proba,
+                    'confidence': confidence,
+                    'mode_name': mode_name
+                }
                 
                 # Plot reservoir states
                 states_np = states.cpu().numpy()[0]
                 
-                # Downsample if needed
-                if states_np.shape[0] > 100:
-                    downsample_factor = states_np.shape[0] // 50
+                # For speech data, keep time dimension intact but limit units shown
+                # Downsample time if too long
+                if states_np.shape[0] > 101:  # Speech typical length
+                    downsample_factor = max(1, states_np.shape[0] // 101)
                     states_np = states_np[::downsample_factor, :]
                 
-                # Limit features shown
-                if states_np.shape[1] > 100:
-                    feature_indices = np.linspace(0, states_np.shape[1]-1, 100, dtype=int)
+                # Limit features shown for visualization
+                max_units_to_show = 200
+                if states_np.shape[1] > max_units_to_show:
+                    # Sample units evenly across the reservoir
+                    feature_indices = np.linspace(0, states_np.shape[1]-1, max_units_to_show, dtype=int)
                     states_np = states_np[:, feature_indices]
                 
                 ax = axes[idx, col]
-                im = ax.imshow(states_np.T, aspect='auto', cmap='coolwarm', interpolation='nearest')
-                ax.set_xlabel('Time', fontsize=9)
-                ax.set_ylabel('Units', fontsize=9)
+                # Use better colormap and interpolation for reservoir states
+                im = ax.imshow(states_np.T, aspect='auto', cmap='RdBu_r', 
+                              interpolation='bilinear', vmin=-1, vmax=1)
+                ax.set_xlabel('Time Step', fontsize=9)
+                ax.set_ylabel('Reservoir Units', fontsize=9)
+                ax.grid(False)  # Remove grid
                 
                 # Color code
                 if class_names:
@@ -355,6 +380,67 @@ def plot_predictions(
                 
                 ax.set_title(title, fontsize=10, fontweight='bold', color=color)
                 plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        
+        # Plot prediction comparison in the 4th column
+        ax_pred = axes[idx, 3]
+        if class_names:
+            # Get predictions from both models
+            mode_keys_list = list(mode_keys[:2])
+            
+            # Create grouped bar chart
+            n_classes = len(class_names)
+            x_pos = np.arange(n_classes)
+            bar_width = 0.35
+            
+            # Get probabilities for both modes
+            colors_pred = ['coral', 'skyblue']
+            
+            for i, mode_key in enumerate(mode_keys_list):
+                pred_info = all_predictions[mode_key][idx]
+                if pred_info['y_proba'] is not None:
+                    proba = pred_info['y_proba']
+                    offset = (i - 0.5) * bar_width
+                    bars = ax_pred.bar(x_pos + offset, proba, bar_width, 
+                                      label=pred_info['mode_name'],
+                                      color=colors_pred[i], alpha=0.7, edgecolor='black')
+                    
+                    # Highlight predicted class
+                    y_pred_idx = int(pred_info['y_pred'])
+                    bars[y_pred_idx].set_edgecolor('black')
+                    bars[y_pred_idx].set_linewidth(2.5)
+            
+            # Highlight ground truth with a green line
+            ax_pred.axvline(int(y_true), color='green', linestyle='--', linewidth=3, 
+                           label=f'Ground Truth', alpha=0.8)
+            
+            # Formatting
+            ax_pred.set_xlabel('Class', fontsize=10)
+            ax_pred.set_ylabel('Probability', fontsize=10)
+            ax_pred.set_title('Prediction Probabilities', fontsize=11, fontweight='bold')
+            ax_pred.set_xticks(x_pos)
+            
+            # Shorten class names if too long
+            short_names = [name[:8] for name in class_names]
+            ax_pred.set_xticklabels(short_names, rotation=45, ha='right', fontsize=8)
+            ax_pred.set_ylim([0, 1])
+            ax_pred.legend(loc='upper right', fontsize=8)
+            ax_pred.grid(alpha=0.3, axis='y')
+            
+            # Add text showing correctness
+            correct_text = ""
+            for mode_key in mode_keys_list:
+                pred_info = all_predictions[mode_key][idx]
+                is_correct = "✓" if pred_info['y_pred'] == y_true else "✗"
+                correct_text += f"{pred_info['mode_name']}: {is_correct}\n"
+            
+            ax_pred.text(0.02, 0.98, correct_text.strip(), transform=ax_pred.transAxes,
+                        fontsize=9, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        else:
+            # For regression, show predictions vs ground truth
+            ax_pred.text(0.5, 0.5, 'Regression\nVisualization\nNot Implemented',
+                        transform=ax_pred.transAxes, ha='center', va='center',
+                        fontsize=10)
     
     plt.suptitle(f'Prediction Examples: {mode1_name} vs {mode2_name}',
                  fontsize=14, fontweight='bold')
