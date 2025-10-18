@@ -244,9 +244,9 @@ def plot_predictions(
     n_samples = len(selected_indices)
     mode_keys = list(models_dict.keys())[:2]  # Only use first two models
     
-    # Create figure: 4 columns (Input, Model1, Model2, Predictions)
-    fig = plt.figure(figsize=(22, 4.5 * n_samples))
-    gs = fig.add_gridspec(n_samples, 4, width_ratios=[1.2, 1, 1, 1.3], 
+    # Create figure: 5 columns (Input, Model1 States, Model2 States, Model1 Pred, Model2 Pred)
+    fig = plt.figure(figsize=(24, 4.5 * n_samples))
+    gs = fig.add_gridspec(n_samples, 5, width_ratios=[1.1, 1, 1, 1.1, 1.1], 
                           hspace=0.35, wspace=0.3)
     
     for idx, sample_idx in enumerate(selected_indices):
@@ -309,123 +309,68 @@ def plot_predictions(
                     'confidence': y_proba[int(y_pred)] if y_proba is not None else None,
                     'is_correct': y_pred == y_true
                 })
-                
-                # ========== Column 2/3: Reservoir States ==========
-                ax_states = fig.add_subplot(gs[idx, col_offset + 1])
-                
-                states_np = states.cpu().numpy()[0]
-                
-                # Downsample time if needed
-                if states_np.shape[0] > 101:
-                    downsample_factor = max(1, states_np.shape[0] // 101)
-                    states_np = states_np[::downsample_factor, :]
-                
-                # Limit units shown
-                if states_np.shape[1] > 150:
-                    feature_indices = np.linspace(0, states_np.shape[1]-1, 150, dtype=int)
-                    states_np = states_np[:, feature_indices]
-                
-                im_states = ax_states.imshow(states_np.T, aspect='auto', cmap='RdBu_r', 
-                                            interpolation='bilinear', vmin=-1.5, vmax=1.5)
-                ax_states.set_xlabel('Time Step', fontsize=10)
-                ax_states.set_ylabel('Units', fontsize=10)
-                ax_states.grid(False)
-                
-                # Title with prediction result
-                pred_label = class_names[int(y_pred)] if class_names else str(y_pred)
-                confidence_str = f" ({predictions[-1]['confidence']:.2f})" if predictions[-1]['confidence'] else ""
-                
-                title_color = 'darkgreen' if predictions[-1]['is_correct'] else 'darkred'
-                status_icon = '✓' if predictions[-1]['is_correct'] else '✗'
-                
-                ax_states.set_title(f'{mode_name}\n{status_icon} Pred: "{pred_label}"{confidence_str}',
-                                   fontsize=11, fontweight='bold', color=title_color)
-                
-                cbar = plt.colorbar(im_states, ax=ax_states, fraction=0.046, pad=0.04)
-                cbar.set_label('Activation', fontsize=8)
-        
-        # ========== Column 4: Prediction Comparison ==========
-        ax_pred = fig.add_subplot(gs[idx, 3])
-        
-        if class_names and predictions[0]['y_proba'] is not None:
-            n_classes = len(class_names)
-            x_pos = np.arange(n_classes)
-            bar_width = 0.38
+                  
+        # ========== Columns 2-3: Show Predicted Class Spectrogram (Average of that class) ==========
+        # For each model, show the average spectrogram of the predicted class
+        for col_offset, (mode_key, pred_info) in enumerate(zip(mode_keys, predictions)):
+            ax_pred_spec = fig.add_subplot(gs[idx, col_offset + 2])
+
+            # Get predicted class
+            y_pred_class = int(pred_info['y_pred'])
             
-            # Plot bars for each model
-            for i, pred_info in enumerate(predictions):
-                offset = (i - 0.5) * bar_width
-                proba = pred_info['y_proba']
+            # Find all samples from predicted class and compute average
+            pred_class_indices = np.where(y_test == y_pred_class)[0]
+            
+            if len(pred_class_indices) > 0:
+                # Sample up to 50 examples from that class to average
+                sample_indices = pred_class_indices[:min(50, len(pred_class_indices))]
+                pred_class_samples = X_test[sample_indices]
                 
-                # Color bars: different color for each model
-                bar_colors = []
-                edge_colors = []
-                edge_widths = []
+                # Average spectrogram for predicted class
+                avg_spectrogram = np.mean(pred_class_samples, axis=0)
                 
-                for class_idx in range(n_classes):
-                    if class_idx == int(pred_info['y_pred']):
-                        # Predicted class: use model-specific color with highlight
-                        bar_colors.append('coral' if i == 0 else 'skyblue')
-                        edge_colors.append('darkred' if i == 0 else 'darkblue')
-                        edge_widths.append(3)
-                    else:
-                        # Non-predicted classes: lighter color
-                        bar_colors.append('lightcoral' if i == 0 else 'lightblue')
-                        edge_colors.append('gray')
-                        edge_widths.append(1)
+                # Plot the average spectrogram of predicted class
+                im_pred = ax_pred_spec.imshow(avg_spectrogram.T, aspect='auto', 
+                                             cmap='viridis', interpolation='bilinear', 
+                                             origin='lower')
                 
-                # Plot bars
-                for class_idx in range(n_classes):
-                    ax_pred.bar(x_pos[class_idx] + offset, proba[class_idx], bar_width,
-                               color=bar_colors[class_idx], 
-                               edgecolor=edge_colors[class_idx],
-                               linewidth=edge_widths[class_idx],
-                               alpha=0.85)
-            
-            # Mark ground truth with vertical line
-            ax_pred.axvline(int(y_true), color='green', linestyle='--', 
-                           linewidth=3.5, alpha=0.7, zorder=0,
-                           label='Ground Truth')
-            
-            # Highlight ground truth region
-            ax_pred.axvspan(int(y_true) - 0.5, int(y_true) + 0.5, 
-                           alpha=0.1, color='green', zorder=0)
-            
-            # Formatting
-            ax_pred.set_xlabel('Class', fontsize=11, fontweight='bold')
-            ax_pred.set_ylabel('Probability', fontsize=11, fontweight='bold')
-            ax_pred.set_title('Prediction Probabilities', fontsize=12, fontweight='bold')
-            ax_pred.set_xticks(x_pos)
-            
-            # Shorten class names if needed
-            short_names = [name[:8] + '..' if len(name) > 8 else name for name in class_names]
-            ax_pred.set_xticklabels(short_names, rotation=45, ha='right', fontsize=9)
-            ax_pred.set_ylim([0, 1.05])
-            ax_pred.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.7)
-            
-            # Add legend
-            from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor='coral', edgecolor='darkred', linewidth=2, label=f'{mode1_name} (predicted)'),
-                Patch(facecolor='skyblue', edgecolor='darkblue', linewidth=2, label=f'{mode2_name} (predicted)'),
-                plt.Line2D([0], [0], color='green', linewidth=3, linestyle='--', label='Ground Truth')
-            ]
-            ax_pred.legend(handles=legend_elements, loc='upper right', fontsize=8, framealpha=0.9)
-            
-            # Add summary text box
-            summary_text = f"True: {true_label}\n"
-            for pred_info in predictions:
-                icon = '✓' if pred_info['is_correct'] else '✗'
-                pred_label = class_names[int(pred_info['y_pred'])]
-                summary_text += f"{pred_info['mode_name']}: {icon} {pred_label}\n"
-            
-            ax_pred.text(0.02, 0.98, summary_text.strip(), 
-                        transform=ax_pred.transAxes,
-                        fontsize=9, verticalalignment='top',
-                        bbox=dict(boxstyle='round,pad=0.6', 
-                                 facecolor='lightyellow', 
-                                 edgecolor='orange', linewidth=1.5, alpha=0.9),
-                        family='monospace')
+                pred_label = class_names[y_pred_class]
+                is_correct = pred_info['is_correct']
+                
+                # Color-code border based on correctness
+                if is_correct:
+                    border_color = 'green'
+                    status = '✓ Correct'
+                else:
+                    border_color = 'red'
+                    status = '✗ Wrong'
+                
+                ax_pred_spec.set_xlabel('Time Step', fontsize=10)
+                ax_pred_spec.set_ylabel('MFCC', fontsize=10)
+                ax_pred_spec.set_title(f'{pred_info["mode_name"]} Predicted\n"{pred_label}" {status}',
+                                      fontsize=11, fontweight='bold', color=border_color)
+                
+                # Add colored border
+                for spine in ax_pred_spec.spines.values():
+                    spine.set_edgecolor(border_color)
+                    spine.set_linewidth(3)
+                
+                plt.colorbar(im_pred, ax=ax_pred_spec, fraction=0.046, pad=0.04)
+                ax_pred_spec.grid(False)
+                
+                # Add confidence text
+                if pred_info['confidence']:
+                    ax_pred_spec.text(0.02, 0.98, f"Conf: {pred_info['confidence']:.3f}",
+                                     transform=ax_pred_spec.transAxes,
+                                     fontsize=9, verticalalignment='top',
+                                     bbox=dict(boxstyle='round', facecolor='white', 
+                                             alpha=0.8, edgecolor=border_color, linewidth=2))
+            else:
+                ax_pred_spec.text(0.5, 0.5, 'No samples\navailable',
+                                transform=ax_pred_spec.transAxes,
+                                ha='center', va='center', fontsize=10)
+                ax_pred_spec.set_title(f'{pred_info["mode_name"]} Predicted',
+                                      fontsize=11, fontweight='bold')
     
     plt.suptitle(f'Speech Recognition Predictions: {mode1_name} vs {mode2_name}',
                  fontsize=16, fontweight='bold', y=0.998)
