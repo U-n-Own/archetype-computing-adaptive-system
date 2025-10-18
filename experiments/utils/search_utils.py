@@ -183,9 +183,11 @@ def connection_mode_search(
         try:
             # Create model
             if verbose:
-                print(f"  Creating model...", end='', flush=True)
+                print(f"  Creating model (n_layers={n_layers})...", end='', flush=True)
             
             model = model_constructor(params, n_layers)
+            if verbose:
+                print(f" model created, moving to {device}...", end='', flush=True)
             model = model.to(device)
             
             if verbose:
@@ -316,9 +318,18 @@ def connection_mode_search(
             
         except Exception as e:
             if verbose:
-                print(f"  ❌ ERROR: {e}")
+                print(f"  ❌ ERROR in config {idx+1}: {e}")
                 import traceback
                 traceback.print_exc()
+                print()
+            # Store failed config for debugging
+            all_results.append({
+                'params': params,
+                'valid_acc': 0.0,
+                'train_time': 0.0,
+                'mode': mode,
+                'error': str(e)
+            })
             continue
     
     # Summary
@@ -327,14 +338,22 @@ def connection_mode_search(
         print(f"{mode} SEARCH COMPLETE")
         print(f"{'='*70}")
         print(f"Tested: {len(all_results)} configurations")
-        print(f"Best validation accuracy: {best_valid_acc:.4f} ({best_valid_acc*100:.2f}%)")
-        print(f"\nBest configuration:")
-        for key, value in best_config.items():
-            print(f"  {key:20s}: {value}")
         
-        all_results.sort(key=lambda x: x['valid_acc'], reverse=True)
-        print(f"\nTop 3 Configurations:")
-        for i, result in enumerate(all_results[:3], 1):
-            print(f"{i}. Valid Acc: {result['valid_acc']:.4f} | Time: {result['train_time']:.2f}s")
+        if best_config is None:
+            print("❌ ERROR: No successful configurations found!")
+            print("All configurations failed. Check the error messages above.")
+        else:
+            print(f"Best validation accuracy: {best_valid_acc:.4f} ({best_valid_acc*100:.2f}%)")
+            print(f"\nBest configuration:")
+            for key, value in best_config.items():
+                print(f"  {key:20s}: {value}")
+            
+            all_results.sort(key=lambda x: x['valid_acc'], reverse=True)
+            print(f"\nTop 3 Configurations:")
+            for i, result in enumerate(all_results[:3], 1):
+                print(f"{i}. Valid Acc: {result['valid_acc']:.4f} | Time: {result['train_time']:.2f}s")
+    
+    if best_config is None:
+        raise RuntimeError(f"No successful configurations found for {mode}. All {len(sampled_params)} configurations failed.")
     
     return best_config, all_results

@@ -252,11 +252,19 @@ def plot_predictions(
         X_sample = X_test[sample_idx:sample_idx+1]
         y_true = y_test[sample_idx]
         
-        # Convert to tensor
+        # Convert to tensor and ensure 3D shape (batch_size, seq_len, features)
         if isinstance(X_sample, np.ndarray):
             X_tensor = torch.tensor(X_sample, dtype=torch.float32).to(device)
         else:
             X_tensor = X_sample.to(device)
+        
+        # Ensure 3D shape for model input (batch, seq_len, features)
+        # Only reshape if we have 2D input (batch, features) -> (batch, 1, features)
+        # If already 3D, leave as is
+        if len(X_tensor.shape) == 2:
+            X_tensor = X_tensor.unsqueeze(1)
+        elif len(X_tensor.shape) > 3:
+            raise ValueError(f"Unexpected input shape: {X_tensor.shape}. Expected 2D or 3D.")
         
         # Plot input
         ax = axes[idx, 0]
@@ -398,11 +406,18 @@ def plot_state_dynamics(
         all_states = []
         all_final_states = []
         
-        # Convert to tensor
+        # Convert to tensor and ensure 3D shape (batch, seq_len, features)
         if isinstance(X_subset, np.ndarray):
             X_tensor = torch.tensor(X_subset, dtype=torch.float32).to(device)
         else:
             X_tensor = X_subset.to(device)
+        
+        # Ensure 3D shape for model input (batch, seq_len, features)
+        # Only reshape if we have 2D input (batch, features) -> (batch, 1, features)
+        if len(X_tensor.shape) == 2:
+            X_tensor = X_tensor.unsqueeze(1)
+        elif len(X_tensor.shape) > 3:
+            raise ValueError(f"Unexpected input shape: {X_tensor.shape}. Expected 2D or 3D.")
         
         batch_size = 32
         with torch.no_grad():
