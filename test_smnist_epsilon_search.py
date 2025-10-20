@@ -109,8 +109,8 @@ if __name__ == "__main__":
     print("Loading sMNIST dataset...")
     train_loader, valid_loader, test_loader = get_mnist_data(
         DATAROOT, 
-        batch_size=BATCH_SIZE, 
-        permuted=True
+        bs_train=BATCH_SIZE,
+        bs_test=BATCH_SIZE
     )
     print(f"Dataset loaded: {len(train_loader.dataset)} train, "
           f"{len(valid_loader.dataset)} valid, {len(test_loader.dataset)} test\n")
