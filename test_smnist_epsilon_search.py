@@ -21,7 +21,7 @@ print("=" * 80)
 DATAROOT = "data"
 BATCH_SIZE = 1000
 N_HID = 500
-RHO = 0.9
+RHO = 0.999
 INP_SCALING = 1.0
 LEAKY = 0.001  # Low leaky rate as used in previous sMNIST experiments
 
@@ -124,17 +124,20 @@ if __name__ == "__main__":
     print("BASELINE: Standard 1-layer ESN")
     print("="*80)
     
+    units_per_layer = N_HID // 1
     model_standard = DeepReservoir(
         input_size=n_inp,
         tot_units=N_HID,
         spectral_radius=RHO,
         n_layers=1,
         input_scaling=INP_SCALING,
-        connectivity_recurrent=N_HID,
-        connectivity_input=N_HID,
-        connectivity_inter=N_HID,
+        inter_scaling=INP_SCALING,
+        connectivity_recurrent=units_per_layer,
+        connectivity_input=units_per_layer,
+        connectivity_inter=units_per_layer,
         leaky=LEAKY,
-        concat=True,
+        cycle=False,
+        linear=False,
         antisymmetric=False,
     ).to(device)
     
@@ -158,18 +161,21 @@ if __name__ == "__main__":
     epsilon_values = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5]
     
     for eps in epsilon_values:
+        units_per_layer_antisym = N_HID // 5
         model_antisym = DeepReservoir(
             input_size=n_inp,
             tot_units=N_HID,
             spectral_radius=RHO,
             n_layers=5,
             input_scaling=INP_SCALING,
-            connectivity_recurrent=N_HID // 5,
-            connectivity_input=N_HID // 5,
-            connectivity_inter=N_HID // 5,
+            inter_scaling=INP_SCALING,
+            connectivity_recurrent=units_per_layer_antisym,
+            connectivity_input=units_per_layer_antisym,
+            connectivity_inter=units_per_layer_antisym,
             leaky=LEAKY,
+            cycle=False,
+            linear=False,
             epsilon=eps,
-            concat=True,
             antisymmetric=True,
         ).to(device)
         
