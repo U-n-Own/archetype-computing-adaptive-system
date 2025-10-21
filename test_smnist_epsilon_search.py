@@ -158,7 +158,7 @@ if __name__ == "__main__":
     print("="*80)
     
     # Test different epsilon values
-    epsilon_values = [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5]
+    epsilon_values = [0.001, 0.01, 0.5]
     
     for eps in epsilon_values:
         units_per_layer_antisym = N_HID // 5
