@@ -286,39 +286,43 @@ if __name__ == "__main__":
     print("Running sMNIST epsilon search test...")
     print("-" * 80)
     try:
-        # Run with real-time output while also capturing
-        result = subprocess.run(
-            ["python", "test_smnist_epsilon_search.py"],
-            capture_output=True,
+        # Use Popen for real-time output streaming
+        process = subprocess.Popen(
+            ["python", "-u", "test_smnist_epsilon_search.py"],  # -u for unbuffered output
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout
             text=True,
-            timeout=3600,  # 1 hour timeout
-            check=True  # Raise exception on non-zero exit
+            bufsize=1  # Line buffered
         )
-        smnist_output = result.stdout
         
-        # Print output (in case it was captured silently)
-        if smnist_output:
-            print(smnist_output)
+        smnist_output = []
+        # Stream output in real-time
+        for line in process.stdout:
+            print(line, end='')  # Print to console
+            smnist_output.append(line)  # Save for parsing
         
-        # Also print stderr if any
-        if result.stderr:
-            print("STDERR:", result.stderr)
+        # Wait for completion
+        process.wait(timeout=3600)
+        
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+        
+        smnist_output_str = ''.join(smnist_output)
         
         # Save raw output
         with open(f"{RESULTS_DIR}/smnist_output_{timestamp}.txt", "w") as f:
-            f.write(smnist_output)
-            if result.stderr:
-                f.write("\n\n=== STDERR ===\n")
-                f.write(result.stderr)
+            f.write(smnist_output_str)
         
         # Parse results
-        all_results['smnist'] = parse_smnist_output(smnist_output)
+        all_results['smnist'] = parse_smnist_output(smnist_output_str)
         print("\n✓ sMNIST test completed successfully\n")
+    except subprocess.TimeoutExpired:
+        print("\n✗ sMNIST test timed out after 1 hour\n")
+        process.kill()
+        all_results['smnist'] = {'dataset': 'sMNIST', 'models': [], 'error': 'Timeout'}
     except subprocess.CalledProcessError as e:
-        print(f"\n✗ sMNIST test failed with exit code {e.returncode}")
-        print(f"STDOUT: {e.stdout}")
-        print(f"STDERR: {e.stderr}\n")
-        all_results['smnist'] = {'dataset': 'sMNIST', 'models': [], 'error': str(e)}
+        print(f"\n✗ sMNIST test failed with exit code {e.returncode}\n")
+        all_results['smnist'] = {'dataset': 'sMNIST', 'models': [], 'error': f'Exit code {e.returncode}'}
     except Exception as e:
         print(f"\n✗ sMNIST test failed: {e}\n")
         all_results['smnist'] = {'dataset': 'sMNIST', 'models': [], 'error': str(e)}
@@ -328,39 +332,43 @@ if __name__ == "__main__":
     print("Running Speech Commands epsilon search test...")
     print("-" * 80)
     try:
-        # Run with real-time output while also capturing
-        result = subprocess.run(
-            ["python", "test_speech_epsilon_search.py"],
-            capture_output=True,
+        # Use Popen for real-time output streaming
+        process = subprocess.Popen(
+            ["python", "-u", "test_speech_epsilon_search.py"],  # -u for unbuffered output
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout
             text=True,
-            timeout=3600,  # 1 hour timeout
-            check=True  # Raise exception on non-zero exit
+            bufsize=1  # Line buffered
         )
-        speech_output = result.stdout
         
-        # Print output (in case it was captured silently)
-        if speech_output:
-            print(speech_output)
+        speech_output = []
+        # Stream output in real-time
+        for line in process.stdout:
+            print(line, end='')  # Print to console
+            speech_output.append(line)  # Save for parsing
         
-        # Also print stderr if any
-        if result.stderr:
-            print("STDERR:", result.stderr)
+        # Wait for completion
+        process.wait(timeout=3600)
+        
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+        
+        speech_output_str = ''.join(speech_output)
         
         # Save raw output
         with open(f"{RESULTS_DIR}/speech_output_{timestamp}.txt", "w") as f:
-            f.write(speech_output)
-            if result.stderr:
-                f.write("\n\n=== STDERR ===\n")
-                f.write(result.stderr)
+            f.write(speech_output_str)
         
         # Parse results
-        all_results['speech'] = parse_speech_output(speech_output)
+        all_results['speech'] = parse_speech_output(speech_output_str)
         print("\n✓ Speech test completed successfully\n")
+    except subprocess.TimeoutExpired:
+        print("\n✗ Speech test timed out after 1 hour\n")
+        process.kill()
+        all_results['speech'] = {'dataset': 'Speech Commands', 'models': [], 'error': 'Timeout'}
     except subprocess.CalledProcessError as e:
-        print(f"\n✗ Speech test failed with exit code {e.returncode}")
-        print(f"STDOUT: {e.stdout}")
-        print(f"STDERR: {e.stderr}\n")
-        all_results['speech'] = {'dataset': 'Speech Commands', 'models': [], 'error': str(e)}
+        print(f"\n✗ Speech test failed with exit code {e.returncode}\n")
+        all_results['speech'] = {'dataset': 'Speech Commands', 'models': [], 'error': f'Exit code {e.returncode}'}
     except Exception as e:
         print(f"\n✗ Speech test failed: {e}\n")
         all_results['speech'] = {'dataset': 'Speech Commands', 'models': [], 'error': str(e)}
