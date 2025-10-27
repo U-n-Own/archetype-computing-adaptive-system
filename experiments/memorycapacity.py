@@ -211,10 +211,12 @@ for t in range(args.trials):
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
             connectivity_recurrent=units_per_layer,
             connectivity_input=units_per_layer,
-            connectivity_inter=1,
+            connectivity_inter=units_per_layer,
             leaky=args.leaky,
             cycle=args.cycle,
-            linear=True,  
+            antisymmetric=True,
+            epsilon=0.005,  # Reduced from 2.0 to prevent numerical instability with antisymmetric coupling
+            linear=True,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
@@ -396,6 +398,11 @@ elif args.deepron:
     f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_DEEPRON{args.resultsuffix}.txt"), "a")
 elif args.esn:
     f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_ESN{args.resultsuffix}.txt"), "a")
+    if (args.esn and args.antisymmetric):
+        # create if not exists
+        os.makedirs(args.resultroot, exist_ok=True)
+
+        f = open(os.path.join(args.resultroot, f"MemoryCapacity_log_ESN_antisymmetric{args.resultsuffix}.txt"), "a")
 else:
     raise ValueError("Wrong model choice.")
 

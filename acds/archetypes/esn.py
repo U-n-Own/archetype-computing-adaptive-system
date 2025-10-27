@@ -156,6 +156,11 @@ class ReservoirCell(torch.nn.Module):
             # This will be used as C for backward coupling and -C^T for forward coupling
             # Matrix should be square with dimension equal to the number of units
             C_base = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
+            
+            # Normalize the coupling matrix to prevent instability
+            # Scale it to have a controlled spectral radius (e.g., 0.9)
+            C_base = spectral_norm_scaling(C_base, 0.9)
+            
             self.C_coupling = nn.Parameter(C_base, requires_grad=False)
             
             # For convenience, also store -C^T
@@ -197,16 +202,23 @@ class ReservoirCell(torch.nn.Module):
             
             # Backward coupling: C * h_{l-1}^{(t-1)}
             if h_prev_layer is not None and self.C_coupling is not None:
-                backward_coupling = torch.mm(h_prev_layer.to(dtype=xt.dtype), self.C_coupling.to(dtype=xt.dtype))
-                antisymmetric_part = antisymmetric_part + backward_coupling
+                # Check dimension compatibility
+                if h_prev_layer.shape[1] == self.C_coupling.shape[0]:
+                    backward_coupling = torch.mm(h_prev_layer.to(dtype=xt.dtype), self.C_coupling.to(dtype=xt.dtype))
+                    antisymmetric_part = antisymmetric_part + backward_coupling
             
             # Forward coupling: -C^T * h_{l+1}^{(t-1)}
             if h_next_layer is not None and self.C_coupling_T_neg is not None:
-                forward_coupling = torch.mm(h_next_layer.to(dtype=xt.dtype), self.C_coupling_T_neg.to(dtype=xt.dtype))
-                antisymmetric_part = antisymmetric_part + forward_coupling  # Already negative in C_coupling_T_neg
+                # Check dimension compatibility
+                if h_next_layer.shape[1] == self.C_coupling_T_neg.shape[0]:
+                    forward_coupling = torch.mm(h_next_layer.to(dtype=xt.dtype), self.C_coupling_T_neg.to(dtype=xt.dtype))
+                    antisymmetric_part = antisymmetric_part + forward_coupling  # Already negative in C_coupling_T_neg
             
             # Scale by epsilon and add to total input
-            total_input = total_input + self.epsilon * antisymmetric_part
+            # Clamp to prevent extreme values that could lead to NaN
+            antisymmetric_contribution = self.epsilon * antisymmetric_part
+            antisymmetric_contribution = torch.clamp(antisymmetric_contribution, min=-10.0, max=10.0)
+            total_input = total_input + antisymmetric_contribution
         
         # Apply activation function
         if self.linear:
