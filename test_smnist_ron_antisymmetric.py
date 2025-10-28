@@ -11,9 +11,322 @@ import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import matplotlib
 
 from acds.archetypes import RandomizedOscillatorsNetwork, DeepRandomizedOscillatorsNetwork
 from acds.benchmarks import get_mnist_data
+
+# Set matplotlib backend for non-interactive plotting
+matplotlib.use('Agg')
+
+# Create results directory
+RESULTS_DIR = "results_smnist_ron_antisymmetric"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+def plot_eigenvalue_spectrum(eigenvalues, title, filename, spectral_radius=None):
+    """
+    Plot the eigenvalue spectrum in the complex plane.
+    
+    Args:
+        eigenvalues: array of complex eigenvalues
+        title: plot title
+        filename: output filename (will be saved in RESULTS_DIR)
+        spectral_radius: if provided, draw a circle with this radius
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot 1: Eigenvalues in complex plane
+    ax1.scatter(eigenvalues.real, eigenvalues.imag, alpha=0.6, s=20, c='blue', edgecolors='black', linewidth=0.5)
+    ax1.axhline(y=0, color='k', linestyle='-', linewidth=0.5, alpha=0.3)
+    ax1.axvline(x=0, color='k', linestyle='-', linewidth=0.5, alpha=0.3)
+    
+    # Draw unit circle
+    theta = np.linspace(0, 2*np.pi, 100)
+    ax1.plot(np.cos(theta), np.sin(theta), 'r--', linewidth=1.5, alpha=0.5, label='Unit circle')
+    
+    # Draw spectral radius circle if provided
+    if spectral_radius is not None:
+        ax1.plot(spectral_radius * np.cos(theta), spectral_radius * np.sin(theta), 
+                'g--', linewidth=2, alpha=0.7, label=f'ρ = {spectral_radius:.4f}')
+    
+    ax1.set_xlabel('Real part', fontsize=12)
+    ax1.set_ylabel('Imaginary part', fontsize=12)
+    ax1.set_title(f'Eigenvalue Spectrum in Complex Plane', fontsize=13)
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=10)
+    ax1.set_aspect('equal', adjustable='box')
+    
+    # Plot 2: Magnitude histogram
+    magnitudes = np.abs(eigenvalues)
+    ax2.hist(magnitudes, bins=50, alpha=0.7, color='blue', edgecolor='black')
+    ax2.axvline(x=1.0, color='r', linestyle='--', linewidth=2, alpha=0.7, label='Unit circle (ρ=1)')
+    if spectral_radius is not None:
+        ax2.axvline(x=spectral_radius, color='g', linestyle='--', linewidth=2, alpha=0.7, 
+                   label=f'ρ = {spectral_radius:.4f}')
+    ax2.set_xlabel('|λ| (Eigenvalue magnitude)', fontsize=12)
+    ax2.set_ylabel('Count', fontsize=12)
+    ax2.set_title('Distribution of Eigenvalue Magnitudes', fontsize=13)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    # Save figure
+    filepath = os.path.join(RESULTS_DIR, filename)
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved eigenvalue spectrum plot to: {filepath}")
+
+
+def plot_spectral_radius_comparison(results, baseline_result=None):
+    """
+    Create comparison plots of spectral radius vs accuracy for all models.
+    
+    Args:
+        results: list of result dictionaries
+        baseline_result: baseline result for reference line
+    """
+    # Filter results with spectral radius
+    results_with_rho = [r for r in results if 'spectral_radius' in r and not r.get('failed', False)]
+    
+    if not results_with_rho:
+        print("No results with spectral radius to plot.")
+        return
+    
+    # Separate baseline and antisymmetric results
+    antisym_results = [r for r in results_with_rho if 'coupling_epsilon' in r]
+    
+    if not antisym_results:
+        print("No antisymmetric results to plot.")
+        return
+    
+    # Extract data for antisymmetric models
+    coupling_eps = np.array([r['coupling_epsilon'] for r in antisym_results])
+    spectral_rho = np.array([r['spectral_radius'] for r in antisym_results])
+    test_acc = np.array([r['test_acc'] * 100 for r in antisym_results])
+    rho_rec = np.array([r['rho'] for r in antisym_results])
+    
+    # Create figure with 2 subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Plot 1: Spectral radius vs coupling strength (colored by RHO)
+    unique_rhos = np.unique(rho_rec)
+    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_rhos)))
+    
+    for i, rho_val in enumerate(unique_rhos):
+        mask = rho_rec == rho_val
+        ax1.plot(coupling_eps[mask], spectral_rho[mask], 'o-', 
+                color=colors[i], label=f'ρ_rec = {rho_val}', 
+                markersize=8, linewidth=2, alpha=0.7)
+    
+    ax1.axhline(y=1.0, color='red', linestyle='--', linewidth=2, alpha=0.5, label='ρ = 1 (stability boundary)')
+    
+    if baseline_result and 'spectral_radius' in baseline_result:
+        ax1.axhline(y=baseline_result['spectral_radius'], color='green', 
+                   linestyle='--', linewidth=2, alpha=0.5, 
+                   label=f"Baseline ρ = {baseline_result['spectral_radius']:.4f}")
+    
+    ax1.set_xlabel('Coupling Strength (ε_c)', fontsize=13)
+    ax1.set_ylabel('Spectral Radius (ρ) of W_total', fontsize=13)
+    ax1.set_title('Spectral Radius vs Coupling Strength', fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Test accuracy vs spectral radius (colored by coupling strength)
+    sc = ax2.scatter(spectral_rho, test_acc, c=coupling_eps, 
+                    cmap='plasma', s=100, alpha=0.7, edgecolors='black', linewidth=1)
+    
+    # Add baseline reference if available
+    if baseline_result and 'spectral_radius' in baseline_result:
+        ax2.scatter(baseline_result['spectral_radius'], baseline_result['test_acc'] * 100,
+                   marker='*', s=400, c='green', edgecolors='black', linewidth=2,
+                   label='Baseline (1-layer RON)', zorder=10)
+    
+    ax2.axvline(x=1.0, color='red', linestyle='--', linewidth=2, alpha=0.5, label='ρ = 1')
+    
+    cbar = plt.colorbar(sc, ax=ax2)
+    cbar.set_label('Coupling Strength (ε_c)', fontsize=11)
+    
+    ax2.set_xlabel('Spectral Radius (ρ) of W_total', fontsize=13)
+    ax2.set_ylabel('Test Accuracy (%)', fontsize=13)
+    ax2.set_title('Test Accuracy vs Spectral Radius', fontsize=14, fontweight='bold')
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save figure
+    filepath = os.path.join(RESULTS_DIR, 'spectral_radius_comparison.png')
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"\nSaved spectral radius comparison plot to: {filepath}")
+
+
+def compute_total_weight_matrix_1layer(model):
+    """
+    Compute the total recurrent weight matrix for a 1-layer RON.
+    
+    Args:
+        model: RandomizedOscillatorsNetwork
+    
+    Returns:
+        W_total: numpy array of the recurrent weight matrix
+        singular_values: singular values of W_total
+        spectral_radius: spectral radius (largest absolute eigenvalue)
+    """
+    W_rec = model.h2h.detach().cpu().numpy()
+    
+    # Compute singular values
+    singular_values = np.linalg.svd(W_rec, compute_uv=False)
+    
+    # Compute spectral radius (largest absolute eigenvalue)
+    eigenvalues = np.linalg.eigvals(W_rec)
+    spectral_radius = np.max(np.abs(eigenvalues))
+    
+    return W_rec, singular_values, spectral_radius
+
+
+def compute_total_weight_matrix_antisymmetric(model, coupling_epsilon):
+    """
+    Compute the total recurrent weight matrix for antisymmetric coupled DeepRON.
+    
+    The total weight matrix is:
+    W_total = [
+        [W_rec^(1),     ε*A,         0,       ...,  0,           0        ],
+        [-ε*A^T,        W_rec^(2),   ε*B,     ...,  0,           0        ],
+        [0,             -ε*B^T,      W_rec^(3),...,  0,           0        ],
+        [...,           ...,         ...,     ...,  ...,         ...      ],
+        [0,             0,           0,       ...,  W_rec^(L-1), ε*Z      ],
+        [0,             0,           0,       ...,  -ε*Z^T,      W_rec^(L)]
+    ]
+    
+    Args:
+        model: DeepRandomizedOscillatorsNetwork with antisymmetric coupling
+        coupling_epsilon: coupling strength
+    
+    Returns:
+        W_total: numpy array of the total weight matrix
+        singular_values: singular values of W_total
+        spectral_radius: spectral radius (largest absolute eigenvalue)
+    """
+    n_layers = len(model.ron_reservoir)
+    layer_sizes = [layer.n_hid for layer in model.ron_reservoir]
+    total_size = sum(layer_sizes)
+    
+    # Initialize total weight matrix
+    W_total = np.zeros((total_size, total_size))
+    
+    # Fill in the block diagonal and coupling matrices
+    row_offset = 0
+    for i, layer in enumerate(model.ron_reservoir):
+        layer_size = layer.n_hid
+        
+        # Add recurrent weight matrix W_rec^(i)
+        W_rec = layer.h2h.detach().cpu().numpy()
+        W_total[row_offset:row_offset+layer_size, row_offset:row_offset+layer_size] = W_rec
+        
+        # Add coupling matrices if not the last layer
+        if i < n_layers - 1 and layer.antisymmetric_coupling:
+            next_layer_size = model.ron_reservoir[i+1].n_hid
+            
+            # Get coupling matrix C
+            C = layer.C_coupling.detach().cpu().numpy()
+            
+            # Add ε*C (forward coupling to next layer)
+            W_total[row_offset:row_offset+layer_size, 
+                   row_offset+layer_size:row_offset+layer_size+next_layer_size] = coupling_epsilon * C
+            
+            # Add -ε*C^T (backward coupling from next layer)
+            W_total[row_offset+layer_size:row_offset+layer_size+next_layer_size,
+                   row_offset:row_offset+layer_size] = -coupling_epsilon * C.T
+        
+        row_offset += layer_size
+    
+    # Compute singular values
+    singular_values = np.linalg.svd(W_total, compute_uv=False)
+    
+    # Compute spectral radius (largest absolute eigenvalue)
+    eigenvalues = np.linalg.eigvals(W_total)
+    spectral_radius = np.max(np.abs(eigenvalues))
+    
+    return W_total, singular_values, spectral_radius
+
+
+def analyze_weight_matrix(model, model_name, coupling_epsilon=None):
+    """
+    Analyze the total recurrent weight matrix of a model.
+    
+    Args:
+        model: Either RandomizedOscillatorsNetwork or DeepRandomizedOscillatorsNetwork
+        model_name: Name for display
+        coupling_epsilon: Coupling strength (for antisymmetric models)
+    
+    Returns:
+        Dictionary with analysis results including eigenvalues
+    """
+    print(f"\n{'='*60}")
+    print(f"Weight Matrix Analysis: {model_name}")
+    print(f"{'='*60}")
+    
+    if isinstance(model, RandomizedOscillatorsNetwork):
+        W_total, singular_values, spectral_radius = compute_total_weight_matrix_1layer(model)
+    elif isinstance(model, DeepRandomizedOscillatorsNetwork) and model.antisymmetric_coupling:
+        if coupling_epsilon is None:
+            coupling_epsilon = model.coupling_epsilon
+        W_total, singular_values, spectral_radius = compute_total_weight_matrix_antisymmetric(
+            model, coupling_epsilon
+        )
+    else:
+        print("  Model does not support weight matrix analysis")
+        return None
+    
+    # Compute eigenvalues
+    eigenvalues = np.linalg.eigvals(W_total)
+    
+    print(f"  Matrix size: {W_total.shape}")
+    print(f"  Spectral radius (ρ): {spectral_radius:.6f}")
+    print(f"  Number of singular values: {len(singular_values)}")
+    print(f"  Largest singular value: {singular_values[0]:.6f}")
+    print(f"  Smallest singular value: {singular_values[-1]:.6f}")
+    print(f"  Condition number: {singular_values[0]/singular_values[-1]:.2e}")
+    
+    # Display top singular values
+    print(f"\n  Top 10 singular values:")
+    for i, sv in enumerate(singular_values[:10]):
+        print(f"    σ_{i+1}: {sv:.6f}")
+    
+    # Check if matrix is (approximately) antisymmetric
+    if W_total.shape[0] == W_total.shape[1]:
+        antisymmetry_error = np.max(np.abs(W_total + W_total.T))
+        print(f"\n  Antisymmetry check ||W + W^T||_∞: {antisymmetry_error:.6f}")
+        if antisymmetry_error < 1e-6:
+            print("    → Matrix is antisymmetric")
+        else:
+            print("    → Matrix is NOT antisymmetric (expected for coupled system)")
+    
+    # Generate filename for the plot
+    safe_name = model_name.replace(' ', '_').replace('(', '').replace(')', '').replace(',', '').replace('=', '')
+    plot_filename = f"eigenspectrum_{safe_name}.png"
+    
+    # Create eigenvalue spectrum plot
+    plot_eigenvalue_spectrum(
+        eigenvalues, 
+        title=f"Eigenvalue Spectrum: {model_name}",
+        filename=plot_filename,
+        spectral_radius=spectral_radius
+    )
+    
+    return {
+        'W_total': W_total,
+        'singular_values': singular_values,
+        'spectral_radius': spectral_radius,
+        'condition_number': singular_values[0]/singular_values[-1],
+        'eigenvalues': eigenvalues,
+        'plot_filename': plot_filename
+    }
 
 print("=" * 80)
 print("sMNIST: Standard 1-layer RON vs Antisymmetric 5-layer RON")
@@ -23,16 +336,20 @@ print("=" * 80)
 # Configuration
 DATAROOT = "data"
 BATCH_SIZE = 1000
-N_HID = 500
+N_HID = 700
+N_TRIALS = 3  # Number of trials to reduce uncertainty
 
 # Hyperparameters for 1-layer RON baseline
 DT = 0.042
-RHO = 0.9  # Note: paper says rho=9 but that's likely a typo, using 0.9
+RHO_BASELINE = 0.9  # For 1-layer baseline
 INP_SCALING = 1.0
 EPSILON_CENTER = 0.51
 EPSILON_RANGE = 0.5
 GAMMA_CENTER = 2.7
 GAMMA_RANGE = 1.0
+
+# Different RHO values to test for 5-layer antisymmetric
+RHO_VALUES = [0.7, 0.8, 0.999]
 
 # Derived parameters
 EPSILON_MIN = EPSILON_CENTER - EPSILON_RANGE
@@ -45,12 +362,14 @@ print(f"Using device: {device}\n")
 
 print("Hyperparameters:")
 print(f"  dt: {DT}")
-print(f"  rho: {RHO}")
+print(f"  rho (baseline): {RHO_BASELINE}")
+print(f"  rho (5-layer search): {RHO_VALUES}")
 print(f"  input_scaling: {INP_SCALING}")
 print(f"  epsilon: ({EPSILON_MIN}, {EPSILON_MAX})")
 print(f"  gamma: ({GAMMA_MIN}, {GAMMA_MAX})")
 print(f"  n_hid: {N_HID}")
-print(f"  batch_size: {BATCH_SIZE}\n")
+print(f"  batch_size: {BATCH_SIZE}")
+print(f"  trials: {N_TRIALS}\n")
 
 n_inp = 1
 n_out = 10
@@ -180,88 +499,162 @@ if __name__ == "__main__":
     results = []
     
     # ========================================
-    # Baseline: Standard 1-layer RON
+    # Baseline: Standard 1-layer RON (with trials)
     # ========================================
     print("\n" + "="*80)
-    print("BASELINE: Standard 1-layer RON")
+    print(f"BASELINE: Standard 1-layer RON ({N_TRIALS} trials)")
     print("="*80)
     
-    model_standard = RandomizedOscillatorsNetwork(
-        n_inp=n_inp,
-        n_hid=N_HID,
-        dt=DT,
-        gamma=(GAMMA_MIN, GAMMA_MAX),
-        epsilon=(EPSILON_MIN, EPSILON_MAX),
-        rho=RHO,
-        input_scaling=INP_SCALING,
-        topology="full",
-        device=device,
-    ).to(device)
-    
-    print(f"Model: 1-layer RON with {N_HID} units")
-    print(f"Parameters: {sum(p.numel() for p in model_standard.parameters())}")
-    
-    result_standard = train_and_evaluate(
-        "Standard 1-layer RON",
-        model_standard,
-        train_loader,
-        valid_loader,
-        test_loader
-    )
-    results.append(result_standard)
-    
-    # Clean up
-    del model_standard
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-    
-    # ========================================
-    # Test: 5-layer Antisymmetric RON with different coupling strengths
-    # ========================================
-    print("\n" + "="*80)
-    print("COUPLING STRENGTH SEARCH: 5-layer Antisymmetric RON")
-    print("="*80)
-    
-    # Test different coupling epsilon values
-    coupling_values = [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0]
-    
-    for coup_eps in coupling_values:
-        print(f"\n{'='*60}")
-        print(f"Testing coupling_epsilon = {coup_eps}")
-        print(f"{'='*60}")
+    baseline_results = []
+    for trial in range(N_TRIALS):
+        print(f"\n--- Trial {trial + 1}/{N_TRIALS} ---")
         
-        model_antisym = DeepRandomizedOscillatorsNetwork(
+        model_standard = RandomizedOscillatorsNetwork(
             n_inp=n_inp,
-            total_units=N_HID,
-            n_layers=5,
+            n_hid=N_HID,
             dt=DT,
             gamma=(GAMMA_MIN, GAMMA_MAX),
             epsilon=(EPSILON_MIN, EPSILON_MAX),
-            rho=RHO,
+            rho=RHO_BASELINE,
             input_scaling=INP_SCALING,
-            inter_scaling=INP_SCALING,
             topology="full",
-            concat=True,
-            antisymmetric_coupling=True,
-            coupling_epsilon=coup_eps,
             device=device,
         ).to(device)
         
-        print(f"Model: 5-layer DeepRON with antisymmetric coupling")
-        print(f"Parameters: {sum(p.numel() for p in model_antisym.parameters())}")
+        if trial == 0:
+            print(f"Model: 1-layer RON with {N_HID} units")
+            print(f"Parameters: {sum(p.numel() for p in model_standard.parameters())}")
+            
+            # Analyze weight matrix (only for first trial)
+            baseline_analysis = analyze_weight_matrix(model_standard, "1-layer RON Baseline")
         
-        result_antisym = train_and_evaluate(
-            f"Antisymmetric 5-layer RON (ε_c={coup_eps})",
-            model_antisym,
+        result_standard = train_and_evaluate(
+            f"Standard 1-layer RON (trial {trial+1})",
+            model_standard,
             train_loader,
             valid_loader,
             test_loader
         )
-        result_antisym['coupling_epsilon'] = coup_eps
-        results.append(result_antisym)
+        result_standard['trial'] = trial + 1
+        result_standard['rho'] = RHO_BASELINE
+        baseline_results.append(result_standard)
         
         # Clean up
-        del model_antisym
+        del model_standard
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    
+    # Average baseline results
+    baseline_avg = {
+        'name': 'Standard 1-layer RON (avg)',
+        'train_acc': np.mean([r['train_acc'] for r in baseline_results]),
+        'valid_acc': np.mean([r['valid_acc'] for r in baseline_results]),
+        'test_acc': np.mean([r['test_acc'] for r in baseline_results]),
+        'train_std': np.std([r['train_acc'] for r in baseline_results]),
+        'valid_std': np.std([r['valid_acc'] for r in baseline_results]),
+        'test_std': np.std([r['test_acc'] for r in baseline_results]),
+        'saturated_pct': np.mean([r['saturated_pct'] for r in baseline_results]),
+        'failed': False,
+        'rho': RHO_BASELINE,
+    }
+    # Add spectral properties from the first trial's analysis
+    if baseline_analysis:
+        baseline_avg['spectral_radius'] = baseline_analysis['spectral_radius']
+        baseline_avg['condition_number'] = baseline_analysis['condition_number']
+    results.append(baseline_avg)
+    print(f"\nBaseline Average Results:")
+    print(f"  Test Accuracy: {baseline_avg['test_acc']*100:.2f}% ± {baseline_avg['test_std']*100:.2f}%")
+    
+    # ========================================
+    # Test: 5-layer Antisymmetric RON with different coupling strengths and RHO values
+    # ========================================
+    print("\n" + "="*80)
+    print(f"COUPLING STRENGTH & RHO SEARCH: 5-layer Antisymmetric RON ({N_TRIALS} trials each)")
+    print("="*80)
+    
+    # Test different coupling epsilon values
+    coupling_values = [0.1, 5.0, 7, 10]
+    
+    for rho_val in RHO_VALUES:
+        print(f"\n{'='*70}")
+        print(f"RHO = {rho_val}")
+        print(f"{'='*70}")
+        
+        for coup_eps in coupling_values:
+            print(f"\n{'='*60}")
+            print(f"Testing coupling_epsilon = {coup_eps}, rho = {rho_val}")
+            print(f"{'='*60}")
+            
+            antisym_results = []
+            for trial in range(N_TRIALS):
+                print(f"\n--- Trial {trial + 1}/{N_TRIALS} ---")
+                
+                model_antisym = DeepRandomizedOscillatorsNetwork(
+                    n_inp=n_inp,
+                    total_units=N_HID,
+                    n_layers=5,
+                    dt=DT,
+                    gamma=(GAMMA_MIN, GAMMA_MAX),
+                    epsilon=(EPSILON_MIN, EPSILON_MAX),
+                    rho=rho_val,
+                    input_scaling=INP_SCALING,
+                    inter_scaling=INP_SCALING,
+                    topology="full",
+                    concat=True,
+                    antisymmetric_coupling=True,
+                    coupling_epsilon=coup_eps,
+                    device=device,
+                ).to(device)
+                
+                if trial == 0:
+                    print(f"Model: 5-layer DeepRON with antisymmetric coupling")
+                    print(f"Parameters: {sum(p.numel() for p in model_antisym.parameters())}")
+                    
+                    # Analyze weight matrix (only for first trial)
+                    antisym_analysis = analyze_weight_matrix(
+                        model_antisym, 
+                        f"5-layer Antisymmetric RON (ε_c={coup_eps}, ρ={rho_val})",
+                        coupling_epsilon=coup_eps
+                    )
+                
+                result_antisym = train_and_evaluate(
+                    f"Antisymmetric 5-layer RON (ε_c={coup_eps}, ρ={rho_val}, trial {trial+1})",
+                    model_antisym,
+                    train_loader,
+                    valid_loader,
+                    test_loader
+                )
+                result_antisym['coupling_epsilon'] = coup_eps
+                result_antisym['rho'] = rho_val
+                result_antisym['trial'] = trial + 1
+                if trial == 0 and antisym_analysis:
+                    result_antisym['spectral_radius'] = antisym_analysis['spectral_radius']
+                    result_antisym['condition_number'] = antisym_analysis['condition_number']
+                antisym_results.append(result_antisym)
+                
+                # Clean up
+                del model_antisym
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            
+            # Average results for this configuration
+            antisym_avg = {
+                'name': f'Antisymmetric 5-layer (ε_c={coup_eps}, ρ={rho_val}, avg)',
+                'train_acc': np.mean([r['train_acc'] for r in antisym_results]),
+                'valid_acc': np.mean([r['valid_acc'] for r in antisym_results]),
+                'test_acc': np.mean([r['test_acc'] for r in antisym_results]),
+                'train_std': np.std([r['train_acc'] for r in antisym_results]),
+                'valid_std': np.std([r['valid_acc'] for r in antisym_results]),
+                'test_std': np.std([r['test_acc'] for r in antisym_results]),
+                'saturated_pct': np.mean([r['saturated_pct'] for r in antisym_results]),
+                'coupling_epsilon': coup_eps,
+                'rho': rho_val,
+                'failed': False,
+            }
+            if 'spectral_radius' in antisym_results[0]:
+                antisym_avg['spectral_radius'] = antisym_results[0]['spectral_radius']
+                antisym_avg['condition_number'] = antisym_results[0]['condition_number']
+            results.append(antisym_avg)
+            print(f"\nAverage Results (ε_c={coup_eps}, ρ={rho_val}):")
+            print(f"  Test Accuracy: {antisym_avg['test_acc']*100:.2f}% ± {antisym_avg['test_std']*100:.2f}%")
     
     # ========================================
     # Summary
@@ -276,17 +669,38 @@ if __name__ == "__main__":
     if not valid_results:
         print("ERROR: All experiments failed!")
     else:
+        # Create comparison plots
+        baseline = [r for r in valid_results if 'Standard 1-layer RON' in r['name'] and 'avg' in r['name']]
+        baseline_result = baseline[0] if baseline else None
+        
+        print("\n" + "="*80)
+        print("GENERATING SPECTRAL ANALYSIS PLOTS")
+        print("="*80)
+        plot_spectral_radius_comparison(valid_results, baseline_result)
+        
         # Sort by test accuracy
         results_sorted = sorted(valid_results, key=lambda x: x['test_acc'], reverse=True)
         
-        print(f"\n{'Rank':<5} {'Model':<50} {'Coupling ε':<12} {'Test Acc':<12} {'Valid Acc':<12} {'Sat %'}")
-        print("-"*105)
+        print(f"\n{'Rank':<5} {'Model':<55} {'ε_c':<8} {'ρ_rec':<8} {'ρ_tot':<10} {'Test Acc':<18} {'Valid Acc':<18}")
+        print("-"*130)
         
         for rank, r in enumerate(results_sorted, 1):
-            coup_str = f"{r.get('coupling_epsilon', 'N/A'):.2f}" if 'coupling_epsilon' in r else "N/A"
+            coup_str = f"{r.get('coupling_epsilon', 0):.2f}" if 'coupling_epsilon' in r else "N/A"
+            rho_rec_str = f"{r.get('rho', 0):.3f}" if 'rho' in r else "N/A"
+            rho_tot_str = f"{r.get('spectral_radius', 0.0):.4f}" if 'spectral_radius' in r else "N/A"
             antisym_marker = "✓" if 'Antisymmetric' in r['name'] else " "
-            print(f"{rank:<5} {antisym_marker} {r['name']:<48} {coup_str:<12} "
-                  f"{r['test_acc']*100:<11.2f}% {r['valid_acc']*100:<11.2f}% {r['saturated_pct']:.2f}%")
+            
+            # Format with std if available
+            test_str = f"{r['test_acc']*100:.2f}%"
+            if 'test_std' in r:
+                test_str += f" ± {r['test_std']*100:.2f}%"
+            
+            valid_str = f"{r['valid_acc']*100:.2f}%"
+            if 'valid_std' in r:
+                valid_str += f" ± {r['valid_std']*100:.2f}%"
+            
+            print(f"{rank:<5} {antisym_marker} {r['name']:<53} {coup_str:<8} {rho_rec_str:<8} {rho_tot_str:<10} "
+                  f"{test_str:<18} {valid_str:<18}")
         
         # Key findings
         print("\n" + "="*80)
@@ -294,10 +708,10 @@ if __name__ == "__main__":
         print("="*80)
         
         best = results_sorted[0]
-        baseline = [r for r in valid_results if r['name'] == 'Standard 1-layer RON']
+        baseline = [r for r in valid_results if 'Standard 1-layer RON' in r['name'] and 'avg' in r['name']]
         baseline = baseline[0] if baseline else None
         
-        antisym_results = [r for r in results_sorted if 'Antisymmetric' in r['name']]
+        antisym_results = [r for r in results_sorted if 'Antisymmetric' in r['name'] and 'avg' in r['name']]
         best_antisym = antisym_results[0] if antisym_results else None
         
         print(f"\nBest overall: {best['name']}")
@@ -306,8 +720,25 @@ if __name__ == "__main__":
             print(f"  Coupling Epsilon: {best['coupling_epsilon']}")
         
         if baseline:
-            print(f"\nBaseline (Standard 1-layer RON):")
-            print(f"  Test Accuracy: {baseline['test_acc']*100:.2f}%")
+            print(f"\nBaseline (Standard 1-layer RON, avg over {N_TRIALS} trials):")
+            print(f"  Test Accuracy: {baseline['test_acc']*100:.2f}% ± {baseline['test_std']*100:.2f}%")
+            print(f"  Spectral Radius: {baseline.get('spectral_radius', 'N/A')}")
+        
+        if best_antisym:
+            print(f"\nBest Antisymmetric (5-layer, avg over {N_TRIALS} trials):")
+            print(f"  Test Accuracy: {best_antisym['test_acc']*100:.2f}% ± {best_antisym['test_std']*100:.2f}%")
+            print(f"  Coupling Epsilon: {best_antisym['coupling_epsilon']}")
+            print(f"  RHO (recurrent): {best_antisym['rho']}")
+            print(f"  Spectral Radius (W_total): {best_antisym.get('spectral_radius', 'N/A')}")
+            
+            if baseline:
+                improvement = (best_antisym['test_acc'] - baseline['test_acc']) * 100
+                print(f"\nAntisymmetric vs Baseline: {improvement:+.2f} percentage points")
+                
+                if best_antisym['test_acc'] > baseline['test_acc']:
+                    print("✓ Antisymmetric coupling provides improvement!")
+                else:
+                    print("✗ Antisymmetric coupling does not improve over baseline")
         
         if best_antisym:
             print(f"\nBest Antisymmetric (5-layer RON):")
@@ -325,14 +756,17 @@ if __name__ == "__main__":
         
         # Plot coupling strength vs accuracy
         print("\n" + "="*80)
-        print("COUPLING STRENGTH ANALYSIS")
+        print("COUPLING STRENGTH vs SPECTRAL RADIUS ANALYSIS")
         print("="*80)
         
-        print(f"\n{'Coupling ε':<12} {'Test Acc':<12} {'Valid Acc':<12}")
-        print("-"*36)
-        for r in results_sorted:
-            if 'coupling_epsilon' in r:
-                print(f"{r['coupling_epsilon']:<12.2f} {r['test_acc']*100:<11.2f}% {r['valid_acc']*100:<11.2f}%")
+        print(f"\n{'Coupling ε':<12} {'Spectral ρ':<12} {'Test Acc':<12} {'Valid Acc':<12}")
+        print("-"*48)
+        antisym_only = [r for r in results_sorted if 'coupling_epsilon' in r]
+        # Sort by coupling epsilon for this table
+        antisym_only_sorted = sorted(antisym_only, key=lambda x: x['coupling_epsilon'])
+        for r in antisym_only_sorted:
+            rho_str = f"{r.get('spectral_radius', 0.0):.4f}" if 'spectral_radius' in r else "N/A"
+            print(f"{r['coupling_epsilon']:<12.2f} {rho_str:<12} {r['test_acc']*100:<11.2f}% {r['valid_acc']*100:<11.2f}%")
     
     print("\n" + "="*80)
     
@@ -343,11 +777,14 @@ if __name__ == "__main__":
         f.write("="*80 + "\n\n")
         f.write("Configuration:\n")
         f.write(f"  N_HID: {N_HID}\n")
+        f.write(f"  N_TRIALS: {N_TRIALS}\n")
         f.write(f"  DT: {DT}\n")
-        f.write(f"  RHO: {RHO}\n")
+        f.write(f"  RHO_BASELINE: {RHO_BASELINE}\n")
+        f.write(f"  RHO_VALUES (5-layer): {RHO_VALUES}\n")
         f.write(f"  INPUT_SCALING: {INP_SCALING}\n")
         f.write(f"  EPSILON: ({EPSILON_MIN}, {EPSILON_MAX})\n")
-        f.write(f"  GAMMA: ({GAMMA_MIN}, {GAMMA_MAX})\n\n")
+        f.write(f"  GAMMA: ({GAMMA_MIN}, {GAMMA_MAX})\n")
+        f.write(f"  COUPLING_VALUES: {coupling_values}\n\n")
         
         f.write("Results:\n")
         f.write("-"*80 + "\n")
@@ -355,9 +792,26 @@ if __name__ == "__main__":
             f.write(f"{r['name']}\n")
             if 'coupling_epsilon' in r:
                 f.write(f"  Coupling Epsilon: {r['coupling_epsilon']}\n")
-            f.write(f"  Train Acc: {r['train_acc']*100:.2f}%\n")
-            f.write(f"  Valid Acc: {r['valid_acc']*100:.2f}%\n")
-            f.write(f"  Test Acc: {r['test_acc']*100:.2f}%\n")
+            if 'rho' in r:
+                f.write(f"  RHO (recurrent): {r['rho']}\n")
+            if 'spectral_radius' in r:
+                f.write(f"  Spectral Radius (W_total): {r['spectral_radius']:.6f}\n")
+            if 'condition_number' in r:
+                f.write(f"  Condition Number: {r['condition_number']:.2e}\n")
+            f.write(f"  Train Acc: {r['train_acc']*100:.2f}%")
+            if 'train_std' in r:
+                f.write(f" ± {r['train_std']*100:.2f}%")
+            f.write("\n")
+            f.write(f"  Valid Acc: {r['valid_acc']*100:.2f}%")
+            if 'valid_std' in r:
+                f.write(f" ± {r['valid_std']*100:.2f}%")
+            f.write("\n")
+            f.write(f"  Test Acc: {r['test_acc']*100:.2f}%")
+            if 'test_std' in r:
+                f.write(f" ± {r['test_std']*100:.2f}%")
+            f.write("\n")
             f.write(f"  Saturation: {r['saturated_pct']:.2f}%\n\n")
     
-    print(f"Results saved to: {result_file}")
+    print(f"\nResults saved to: {result_file}")
+    print(f"Eigenvalue spectrum plots saved to: {RESULTS_DIR}/")
+    print(f"Summary comparison plot: {RESULTS_DIR}/spectral_radius_comparison.png")
