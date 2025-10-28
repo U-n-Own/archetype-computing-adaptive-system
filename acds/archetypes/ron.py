@@ -56,6 +56,8 @@ class RandomizedOscillatorsNetwork(nn.Module):
         sparsity=0.0,
         device="cpu",
         cycle: bool = False,
+        antisymmetric_coupling: bool = False,
+        coupling_epsilon: float = 0.1,
     ):
         """Initialize the RON model.
 
@@ -79,12 +81,17 @@ class RandomizedOscillatorsNetwork(nn.Module):
                 matrix.
             sparsity (float): Sparsity of the hidden-to-hidden weight matrix.
             device (str): Device to run the model on. Options are 'cpu' and 'cuda'.
+            cycle (bool): Whether to use cycle connections between layers.
+            antisymmetric_coupling (bool): Whether to use antisymmetric coupling between layers.
+            coupling_epsilon (float): Coupling strength for antisymmetric connections.
         """
         super().__init__()
         self.n_hid = n_hid
         self.device = device
         self.dt = dt
         self.cycle = cycle
+        self.antisymmetric_coupling = antisymmetric_coupling
+        self.coupling_epsilon = coupling_epsilon
         self.diffusive_matrix = diffusive_gamma * torch.eye(n_hid).to(device)
         if isinstance(gamma, tuple):
             gamma_min, gamma_max = gamma
@@ -124,9 +131,26 @@ class RandomizedOscillatorsNetwork(nn.Module):
         self.x2h = nn.Parameter(x2h, requires_grad=False)
         bias = (torch.rand(n_hid) * 2 - 1) * input_scaling
         self.bias = nn.Parameter(bias, requires_grad=False)
+        
+        # Initialize antisymmetric coupling matrices if enabled
+        if self.antisymmetric_coupling:
+            # Create coupling matrix C for antisymmetric coupling between layers
+            # C will be used for backward coupling, -C^T for forward coupling
+            C_base = torch.rand(n_hid, n_hid) * 0.5 - 0.25  # Random in [-0.25, 0.25]
+            
+            # Normalize the coupling matrix to prevent instability
+            C_base = spectral_norm_scaling(C_base, 0.5)
+            
+            self.C_coupling = nn.Parameter(C_base, requires_grad=False)
+            # Store -C^T for convenience
+            self.C_coupling_T_neg = nn.Parameter(-C_base.T, requires_grad=False)
+        else:
+            self.C_coupling = None
+            self.C_coupling_T_neg = None
 
     def cell(
-        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor, first_layer: bool = False, h_last=None
+        self, x: torch.Tensor, hy: torch.Tensor, hz: torch.Tensor, first_layer: bool = False, h_last=None,
+        h_prev_layer=None, h_next_layer=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute the next hidden state and its derivative.
 
@@ -136,20 +160,50 @@ class RandomizedOscillatorsNetwork(nn.Module):
             hz (torch.Tensor): Current hidden state derivative.
             first_layer (bool): Whether this is the first layer.
             h_last (torch.Tensor): Hidden state from the last layer for cycle feedback.
+            h_prev_layer (torch.Tensor): Hidden state from previous layer for antisymmetric coupling.
+            h_next_layer (torch.Tensor): Hidden state from next layer for antisymmetric coupling.
         """
         # convert to same type of x
         hz = hz.to(x.dtype)
         hy = hy.to(x.dtype)
         
         cycle_part = 0
+        antisymmetric_part = 0
         
         if self.cycle and first_layer and h_last is not None:
             # Project h_last with cycle_kernel and add to the input
             cycle_part = torch.matmul(h_last, self.cycle_kernel.to(dtype=x.dtype))
+        
+        # Add antisymmetric coupling if enabled
+        if self.antisymmetric_coupling:
+            # Backward coupling: C * h_{l-1}^{(t-1)}
+            if h_prev_layer is not None and self.C_coupling is not None:
+                # Check dimension compatibility
+                if h_prev_layer.shape[1] == self.C_coupling.shape[0]:
+                    backward_coupling = torch.matmul(h_prev_layer.to(dtype=x.dtype), self.C_coupling.to(dtype=x.dtype))
+                    antisymmetric_part = antisymmetric_part + backward_coupling
+            
+            # Forward coupling: -C^T * h_{l+1}^{(t-1)}
+            if h_next_layer is not None and self.C_coupling_T_neg is not None:
+                # Check dimension compatibility
+                if h_next_layer.shape[1] == self.C_coupling_T_neg.shape[0]:
+                    forward_coupling = torch.matmul(h_next_layer.to(dtype=x.dtype), self.C_coupling_T_neg.to(dtype=x.dtype))
+                    antisymmetric_part = antisymmetric_part + forward_coupling
+            
+            # Scale by coupling epsilon and clamp to prevent extreme values
+            antisymmetric_contribution = self.coupling_epsilon * antisymmetric_part
+            antisymmetric_contribution = torch.clamp(antisymmetric_contribution, min=-10.0, max=10.0)
+        else:
+            antisymmetric_contribution = 0
          
         hz = hz + self.dt * (
             torch.tanh(
-                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + torch.matmul(hy, self.h2h.to(dtype=x.dtype)) + cycle_part - torch.matmul(hy, self.diffusive_matrix.to(dtype=x.dtype)) + self.bias.to(dtype=x.dtype))
+                torch.matmul(x, self.x2h.to(dtype=x.dtype)) + 
+                torch.matmul(hy, self.h2h.to(dtype=x.dtype)) + 
+                cycle_part + 
+                antisymmetric_contribution -
+                torch.matmul(hy, self.diffusive_matrix.to(dtype=x.dtype)) + 
+                self.bias.to(dtype=x.dtype))
             - self.gamma * hy
             - self.epsilon * hz
         )
@@ -229,6 +283,9 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         connectivity_input: int = 10,
         connectivity_inter: int = 10,
         cycle: bool = False,
+        linear: bool = False,
+        antisymmetric_coupling: bool = False,
+        coupling_epsilon: float = 0.1,
     ):
         """Initialize the DeepRON model.
 
@@ -247,6 +304,9 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         #self.n_inp = n_inp
         self.layers = nn.ModuleList()   
         self.cycle = cycle
+        self.linear = linear
+        self.antisymmetric_coupling = antisymmetric_coupling
+        self.coupling_epsilon = coupling_epsilon
         
         self.concat = concat
 
@@ -270,6 +330,8 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     sparsity=sparsity, 
                                     reservoir_scaler=self.reservoir_scaler,
                                     cycle=self.cycle,
+                                    antisymmetric_coupling=antisymmetric_coupling,
+                                    coupling_epsilon=coupling_epsilon,
                                     device=device, 
                                     #TODO still sparse connectivity to implement
                                     #connectivity_input=connectivity_input_1,
@@ -291,6 +353,8 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     sparsity=sparsity, 
                     reservoir_scaler=reservoir_scaler, 
                     cycle=self.cycle,
+                    antisymmetric_coupling=antisymmetric_coupling,
+                    coupling_epsilon=coupling_epsilon,
                     device=device, 
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
@@ -324,7 +388,62 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         # list to store the hidden states of each layer
         states = []
        
-        if self.cycle:
+        if self.antisymmetric_coupling:
+            # Antisymmetric coupling mode - requires layer interaction at each timestep
+            batch_size, seq_len, _ = x.shape
+            
+            # Initialize hidden states and derivatives for all layers
+            h_states = []
+            hz_states = []
+            for i, ron_layer in enumerate(self.ron_reservoir):
+                h_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=x.device))
+                hz_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=x.device))
+            
+            layer_states_all = [[] for _ in range(len(self.ron_reservoir))]
+
+            for t in range(seq_len):
+                current_input = x[:, t, :] if t == 0 else None
+                new_h_states = []
+                new_hz_states = []
+                
+                for i, ron_layer in enumerate(self.ron_reservoir):
+                    # Prepare layer input
+                    if i == 0:
+                        layer_input = x[:, t, :]
+                    else:
+                        # Use previous layer's current output (from this timestep)
+                        layer_input = new_h_states[i-1]
+                    
+                    # Prepare antisymmetric coupling inputs (from previous timestep)
+                    h_prev_layer = h_states[i-1] if i > 0 else None
+                    h_next_layer = h_states[i+1] if i < len(self.ron_reservoir) - 1 else None
+                    
+                    # Forward through the layer with antisymmetric coupling
+                    new_h, new_hz = ron_layer.cell(
+                        layer_input,
+                        h_states[i],  # Previous hidden state of this layer
+                        hz_states[i],  # Previous hidden derivative of this layer
+                        first_layer=(i == 0),
+                        h_last=None,  # No cycle connections in antisymmetric mode
+                        h_prev_layer=h_prev_layer,  # Previous layer state for antisymmetric coupling
+                        h_next_layer=h_next_layer   # Next layer state for antisymmetric coupling
+                    )
+                    
+                    new_h_states.append(new_h)
+                    new_hz_states.append(new_hz)
+                    layer_states_all[i].append(new_h)
+                
+                # Update hidden states for next timestep
+                h_states = new_h_states
+                hz_states = new_hz_states
+            
+            # Stack the layer states over time dimension
+            for i in range(len(self.ron_reservoir)):
+                stacked_states = torch.stack(layer_states_all[i], dim=1)
+                states.append(stacked_states)
+                layer_states.append(stacked_states[:, -1, :])
+                
+        elif self.cycle:
             # Initialize hidden states for all layers
             batch_size, seq_len, _ = x.shape
             
