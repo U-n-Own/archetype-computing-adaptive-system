@@ -165,6 +165,438 @@ def plot_spectral_radius_comparison(results, baseline_result=None):
     print(f"\nSaved spectral radius comparison plot to: {filepath}")
 
 
+def collect_trajectories(model, data_loader, n_samples=5, device='cpu'):
+    """
+    Collect hidden state trajectories from the model for visualization.
+    
+    Args:
+        model: RON or DeepRON model
+        data_loader: data loader with samples
+        n_samples: number of samples to collect trajectories for
+        device: computation device
+    
+    Returns:
+        Dictionary with trajectories and metadata
+    """
+    model.eval()
+    trajectories = []
+    labels_collected = []
+    
+    with torch.no_grad():
+        for images, labels in data_loader:
+            if len(trajectories) >= n_samples:
+                break
+            
+            images = images[:n_samples - len(trajectories)].to(device)
+            images = images.view(images.shape[0], -1).unsqueeze(-1)
+            labels = labels[:n_samples - len(trajectories)]
+            
+            # Get model output - handle both RON and DeepRON
+            if isinstance(model, DeepRandomizedOscillatorsNetwork):
+                # For DeepRON, call forward which returns (concat_states, layer_states_list)
+                output, layer_states_final = model(images)
+                
+                # We need to extract per-timestep, per-layer states
+                # The model stores them in layer_states_all during forward pass
+                # Let's collect them by re-running with manual extraction
+                batch_size, seq_len, _ = images.shape
+                n_layers = len(model.ron_reservoir)
+                
+                # Initialize storage for trajectories: [batch, time, layer, hidden]
+                batch_trajectories = [[[] for _ in range(n_layers)] for _ in range(batch_size)]
+                
+                # Re-run forward pass with state collection
+                h_states = []
+                hz_states = []
+                for ron_layer in model.ron_reservoir:
+                    h_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=device))
+                    hz_states.append(torch.zeros(batch_size, ron_layer.n_hid, device=device))
+                
+                for t in range(seq_len):
+                    new_h_states = []
+                    new_hz_states = []
+                    
+                    for i, ron_layer in enumerate(model.ron_reservoir):
+                        # Prepare layer input
+                        if i == 0:
+                            layer_input = images[:, t, :]
+                        else:
+                            layer_input = new_h_states[i-1]
+                        
+                        # Prepare antisymmetric coupling inputs
+                        h_prev_layer = h_states[i-1] if i > 0 else None
+                        h_next_layer = h_states[i+1] if i < len(model.ron_reservoir) - 1 else None
+                        
+                        # Forward through the layer
+                        new_h, new_hz = ron_layer.cell(
+                            layer_input,
+                            h_states[i],
+                            hz_states[i],
+                            first_layer=(i == 0),
+                            h_last=None,
+                            h_prev_layer=h_prev_layer,
+                            h_next_layer=h_next_layer
+                        )
+                        
+                        new_h_states.append(new_h)
+                        new_hz_states.append(new_hz)
+                        
+                        # Store states for each batch sample
+                        for b in range(batch_size):
+                            batch_trajectories[b][i].append(new_h[b].cpu().numpy())
+                    
+                    # Update hidden states for next timestep
+                    h_states = new_h_states
+                    hz_states = new_hz_states
+                
+                # Convert to proper format: [batch][time][layer] = numpy_array
+                for b in range(batch_size):
+                    sample_traj = []
+                    for t in range(seq_len):
+                        timestep_states = [batch_trajectories[b][layer_idx][t] for layer_idx in range(n_layers)]
+                        sample_traj.append(timestep_states)
+                    trajectories.append(sample_traj)
+                    labels_collected.append(labels[b].item())
+                    
+            else:
+                # For standard RON
+                batch_size, seq_len, _ = images.shape
+                output, final_states = model(images)
+                
+                # Re-run to collect all timesteps
+                h = torch.zeros(batch_size, model.n_hid, device=device)
+                hz = torch.zeros(batch_size, model.n_hid, device=device)
+                
+                all_hidden = []
+                for t in range(seq_len):
+                    inp = images[:, t, :]
+                    h, hz = model.cell(inp, h, hz, first_layer=True, h_last=None)
+                    all_hidden.append(h.cpu().numpy())
+                
+                # Stack: [time, batch, hidden]
+                all_hidden = np.stack(all_hidden, axis=0)
+                
+                # Reorganize: [batch][time, hidden]
+                for b in range(batch_size):
+                    trajectories.append(all_hidden[:, b, :])  # [time, hidden]
+                    labels_collected.append(labels[b].item())
+    
+    return {
+        'trajectories': trajectories,
+        'labels': labels_collected,
+        'is_multilayer': isinstance(model, DeepRandomizedOscillatorsNetwork)
+    }
+
+
+def plot_phase_space_trajectories(trajectory_data, model_name, filename, n_dims=3):
+    """
+    Visualize phase space trajectories using PCA projection.
+    
+    Args:
+        trajectory_data: dict with trajectories and metadata
+        model_name: name for the plot title
+        filename: output filename
+        n_dims: number of dimensions for PCA projection (2 or 3)
+    """
+    from sklearn.decomposition import PCA
+    
+    trajectories = trajectory_data['trajectories']
+    labels = trajectory_data['labels']
+    is_multilayer = trajectory_data['is_multilayer']
+    
+    if is_multilayer:
+        # Multi-layer visualization
+        n_samples = len(trajectories)
+        n_timesteps = len(trajectories[0])
+        n_layers = len(trajectories[0][0])
+        
+        # Create subplots for each layer
+        n_cols = min(3, n_layers)
+        n_rows = (n_layers + n_cols - 1) // n_cols
+        
+        if n_dims == 3:
+            fig = plt.figure(figsize=(6*n_cols, 5*n_rows))
+            
+            for layer_idx in range(n_layers):
+                # Collect all states for this layer
+                layer_states = []
+                for sample_idx in range(n_samples):
+                    for t in range(n_timesteps):
+                        if len(trajectories[sample_idx][t]) > layer_idx:
+                            layer_states.append(trajectories[sample_idx][t][layer_idx])
+                
+                if not layer_states:
+                    continue
+                
+                layer_states = np.array(layer_states)
+                
+                # Apply PCA
+                pca = PCA(n_components=3)
+                states_pca = pca.fit_transform(layer_states)
+                var_explained = pca.explained_variance_ratio_
+                
+                # Reshape back to trajectories
+                states_pca = states_pca.reshape(n_samples, n_timesteps, 3)
+                
+                # Create 3D subplot
+                ax = fig.add_subplot(n_rows, n_cols, layer_idx + 1, projection='3d')
+                
+                # Plot each trajectory with different color per class
+                colors = plt.cm.tab10(np.array(labels))
+                for i in range(n_samples):
+                    traj = states_pca[i]
+                    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2], 
+                           alpha=0.6, linewidth=2, color=colors[i])
+                    # Mark start and end
+                    ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2], 
+                              c=[colors[i]], marker='o', s=100, edgecolors='black', linewidth=2)
+                    ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2], 
+                              c=[colors[i]], marker='s', s=100, edgecolors='black', linewidth=2)
+                
+                ax.set_xlabel(f'PC1 ({var_explained[0]*100:.1f}%)', fontsize=10)
+                ax.set_ylabel(f'PC2 ({var_explained[1]*100:.1f}%)', fontsize=10)
+                ax.set_zlabel(f'PC3 ({var_explained[2]*100:.1f}%)', fontsize=10)
+                ax.set_title(f'Layer {layer_idx + 1}', fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+        else:
+            # 2D visualization
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 5*n_rows))
+            if n_layers == 1:
+                axes = np.array([axes])
+            axes = axes.flatten()
+            
+            for layer_idx in range(n_layers):
+                # Collect all states for this layer
+                layer_states = []
+                for sample_idx in range(n_samples):
+                    for t in range(n_timesteps):
+                        if len(trajectories[sample_idx][t]) > layer_idx:
+                            layer_states.append(trajectories[sample_idx][t][layer_idx])
+                
+                if not layer_states:
+                    continue
+                
+                layer_states = np.array(layer_states)
+                
+                # Apply PCA
+                pca = PCA(n_components=2)
+                states_pca = pca.fit_transform(layer_states)
+                var_explained = pca.explained_variance_ratio_
+                
+                # Reshape back to trajectories
+                states_pca = states_pca.reshape(n_samples, n_timesteps, 2)
+                
+                ax = axes[layer_idx]
+                
+                # Plot each trajectory with different color per class
+                colors = plt.cm.tab10(np.array(labels))
+                for i in range(n_samples):
+                    traj = states_pca[i]
+                    ax.plot(traj[:, 0], traj[:, 1], 
+                           alpha=0.6, linewidth=2, color=colors[i], label=f'Digit {labels[i]}')
+                    # Mark start and end
+                    ax.scatter(traj[0, 0], traj[0, 1], 
+                              c=[colors[i]], marker='o', s=100, edgecolors='black', linewidth=2)
+                    ax.scatter(traj[-1, 0], traj[-1, 1], 
+                              c=[colors[i]], marker='s', s=100, edgecolors='black', linewidth=2)
+                
+                ax.set_xlabel(f'PC1 ({var_explained[0]*100:.1f}%)', fontsize=10)
+                ax.set_ylabel(f'PC2 ({var_explained[1]*100:.1f}%)', fontsize=10)
+                ax.set_title(f'Layer {layer_idx + 1}', fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+            
+            # Hide unused subplots
+            for idx in range(n_layers, len(axes)):
+                axes[idx].axis('off')
+        
+        fig.suptitle(f'Phase Space Trajectories: {model_name}\n(○ = start, □ = end, colors = digit classes)', 
+                     fontsize=14, fontweight='bold')
+    else:
+        # Single layer visualization
+        n_samples = len(trajectories)
+        n_timesteps = trajectories[0].shape[0]
+        
+        # Stack all states
+        all_states = np.vstack(trajectories)  # [n_samples * n_timesteps, hidden_dim]
+        
+        # Apply PCA
+        if n_dims == 3:
+            pca = PCA(n_components=3)
+            states_pca = pca.fit_transform(all_states)
+            var_explained = pca.explained_variance_ratio_
+            states_pca = states_pca.reshape(n_samples, n_timesteps, 3)
+            
+            fig = plt.figure(figsize=(12, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            
+            colors = plt.cm.tab10(np.array(labels))
+            for i in range(n_samples):
+                traj = states_pca[i]
+                ax.plot(traj[:, 0], traj[:, 1], traj[:, 2], 
+                       alpha=0.7, linewidth=2.5, color=colors[i], label=f'Digit {labels[i]}')
+                # Mark start and end
+                ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2], 
+                          c=[colors[i]], marker='o', s=150, edgecolors='black', linewidth=2)
+                ax.scatter(traj[-1, 0], traj[-1, 1], traj[-1, 2], 
+                          c=[colors[i]], marker='s', s=150, edgecolors='black', linewidth=2)
+            
+            ax.set_xlabel(f'PC1 ({var_explained[0]*100:.1f}%)', fontsize=12)
+            ax.set_ylabel(f'PC2 ({var_explained[1]*100:.1f}%)', fontsize=12)
+            ax.set_zlabel(f'PC3 ({var_explained[2]*100:.1f}%)', fontsize=12)
+            ax.legend(loc='best', fontsize=10)
+            ax.grid(True, alpha=0.3)
+        else:
+            pca = PCA(n_components=2)
+            states_pca = pca.fit_transform(all_states)
+            var_explained = pca.explained_variance_ratio_
+            states_pca = states_pca.reshape(n_samples, n_timesteps, 2)
+            
+            fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+            
+            colors = plt.cm.tab10(np.array(labels))
+            for i in range(n_samples):
+                traj = states_pca[i]
+                ax.plot(traj[:, 0], traj[:, 1], 
+                       alpha=0.7, linewidth=2.5, color=colors[i], label=f'Digit {labels[i]}')
+                # Mark start and end
+                ax.scatter(traj[0, 0], traj[0, 1], 
+                          c=[colors[i]], marker='o', s=150, edgecolors='black', linewidth=2)
+                ax.scatter(traj[-1, 0], traj[-1, 1], 
+                          c=[colors[i]], marker='s', s=150, edgecolors='black', linewidth=2)
+            
+            ax.set_xlabel(f'PC1 ({var_explained[0]*100:.1f}%)', fontsize=12)
+            ax.set_ylabel(f'PC2 ({var_explained[1]*100:.1f}%)', fontsize=12)
+            ax.legend(loc='best', fontsize=10)
+            ax.grid(True, alpha=0.3)
+        
+        fig.suptitle(f'Phase Space Trajectories: {model_name}\n(○ = start, □ = end)', 
+                     fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    filepath = os.path.join(RESULTS_DIR, filename)
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved phase space trajectory plot to: {filepath}")
+
+
+def plot_temporal_evolution(trajectory_data, model_name, filename):
+    """
+    Plot temporal evolution of hidden state norms and activity.
+    
+    Args:
+        trajectory_data: dict with trajectories and metadata
+        model_name: name for the plot title
+        filename: output filename
+    """
+    trajectories = trajectory_data['trajectories']
+    labels = trajectory_data['labels']
+    is_multilayer = trajectory_data['is_multilayer']
+    
+    if is_multilayer:
+        n_samples = len(trajectories)
+        n_timesteps = len(trajectories[0])
+        n_layers = len(trajectories[0][0])
+        
+        fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+        
+        # Plot 1: State norm over time for each layer
+        ax = axes[0]
+        colors_layers = plt.cm.viridis(np.linspace(0, 1, n_layers))
+        
+        for layer_idx in range(n_layers):
+            norms_over_time = []
+            for t in range(n_timesteps):
+                timestep_norms = []
+                for sample_idx in range(n_samples):
+                    if len(trajectories[sample_idx][t]) > layer_idx:
+                        state = trajectories[sample_idx][t][layer_idx]
+                        timestep_norms.append(np.linalg.norm(state))
+                norms_over_time.append(timestep_norms)
+            
+            # Compute mean and std across samples
+            mean_norms = [np.mean(norms) for norms in norms_over_time]
+            std_norms = [np.std(norms) for norms in norms_over_time]
+            
+            timesteps = np.arange(n_timesteps)
+            ax.plot(timesteps, mean_norms, color=colors_layers[layer_idx], 
+                   linewidth=2, label=f'Layer {layer_idx + 1}')
+            ax.fill_between(timesteps, 
+                           np.array(mean_norms) - np.array(std_norms),
+                           np.array(mean_norms) + np.array(std_norms),
+                           color=colors_layers[layer_idx], alpha=0.2)
+        
+        ax.set_xlabel('Time Step', fontsize=12)
+        ax.set_ylabel('Hidden State Norm', fontsize=12)
+        ax.set_title('State Magnitude Evolution Over Time', fontsize=13, fontweight='bold')
+        ax.legend(loc='best', fontsize=10)
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Mean activity per layer
+        ax = axes[1]
+        layer_activities = []
+        for layer_idx in range(n_layers):
+            activities = []
+            for sample_idx in range(n_samples):
+                for t in range(n_timesteps):
+                    if len(trajectories[sample_idx][t]) > layer_idx:
+                        state = trajectories[sample_idx][t][layer_idx]
+                        activities.append(np.mean(np.abs(state)))
+            layer_activities.append(np.mean(activities))
+        
+        ax.bar(range(1, n_layers + 1), layer_activities, color=colors_layers, alpha=0.7, edgecolor='black')
+        ax.set_xlabel('Layer', fontsize=12)
+        ax.set_ylabel('Mean Absolute Activity', fontsize=12)
+        ax.set_title('Average Activity per Layer', fontsize=13, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        
+    else:
+        # Single layer visualization
+        n_samples = len(trajectories)
+        n_timesteps = trajectories[0].shape[0]
+        
+        fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+        
+        # Plot 1: State norm over time
+        ax = axes[0]
+        colors_samples = plt.cm.tab10(np.array(labels))
+        
+        for i in range(n_samples):
+            norms = [np.linalg.norm(trajectories[i][t]) for t in range(n_timesteps)]
+            ax.plot(range(n_timesteps), norms, color=colors_samples[i], 
+                   linewidth=2, alpha=0.7, label=f'Digit {labels[i]}')
+        
+        ax.set_xlabel('Time Step', fontsize=12)
+        ax.set_ylabel('Hidden State Norm', fontsize=12)
+        ax.set_title('State Magnitude Evolution Over Time', fontsize=13, fontweight='bold')
+        ax.legend(loc='best', fontsize=10)
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Mean activity across hidden dimensions
+        ax = axes[1]
+        mean_activity = []
+        for t in range(n_timesteps):
+            activities = [np.mean(np.abs(trajectories[i][t])) for i in range(n_samples)]
+            mean_activity.append(np.mean(activities))
+        
+        ax.plot(range(n_timesteps), mean_activity, linewidth=2.5, color='blue')
+        ax.fill_between(range(n_timesteps), 
+                        np.array(mean_activity) * 0.9,
+                        np.array(mean_activity) * 1.1,
+                        alpha=0.2, color='blue')
+        ax.set_xlabel('Time Step', fontsize=12)
+        ax.set_ylabel('Mean Absolute Activity', fontsize=12)
+        ax.set_title('Average Activity Over Time', fontsize=13, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+    
+    fig.suptitle(f'Temporal Dynamics: {model_name}', fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout()
+    
+    filepath = os.path.join(RESULTS_DIR, filename)
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved temporal evolution plot to: {filepath}")
+
+
 def compute_total_weight_matrix_1layer(model):
     """
     Compute the total recurrent weight matrix for a 1-layer RON.
@@ -349,8 +781,8 @@ GAMMA_CENTER = 2.7
 GAMMA_RANGE = 1.0
 
 # Different RHO values to test for 5-layer antisymmetric
-RHO_VALUES = [0.7, 0.8, 0.999]
-
+#RHO_VALUES = [0.7, 0.8, 0.999]
+RHO_VALUES = [0.9]
 # Derived parameters
 EPSILON_MIN = EPSILON_CENTER - EPSILON_RANGE
 EPSILON_MAX = EPSILON_CENTER + EPSILON_RANGE
@@ -407,7 +839,7 @@ def test(data_loader, model, classifier, scaler):
     return classifier.score(activations, ys)
 
 
-def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader):
+def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader, visualize_trajectory=False):
     """Train and evaluate a model."""
     print(f"\n{'='*60}")
     print(f"Training: {model_name}")
@@ -475,6 +907,40 @@ def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loade
     print(f"  Valid Accuracy: {valid_acc*100:.2f}%")
     print(f"  Test Accuracy:  {test_acc*100:.2f}%")
     
+    # Visualize trajectories if requested
+    if visualize_trajectory:
+        print("\n  Generating phase space trajectory visualizations...")
+        device = next(model.parameters()).device
+        
+        # Collect trajectories from test set
+        trajectory_data = collect_trajectories(model, test_loader, n_samples=5, device=device)
+        
+        # Generate safe filename
+        safe_name = model_name.replace(' ', '_').replace('(', '').replace(')', '').replace(',', '').replace('=', '')
+        
+        # Plot 3D phase space trajectories
+        plot_phase_space_trajectories(
+            trajectory_data,
+            model_name=model_name,
+            filename=f"trajectory_3d_{safe_name}.png",
+            n_dims=3
+        )
+        
+        # Plot 2D phase space trajectories
+        plot_phase_space_trajectories(
+            trajectory_data,
+            model_name=model_name,
+            filename=f"trajectory_2d_{safe_name}.png",
+            n_dims=2
+        )
+        
+        # Plot temporal evolution
+        plot_temporal_evolution(
+            trajectory_data,
+            model_name=model_name,
+            filename=f"temporal_{safe_name}.png"
+        )
+    
     return {
         'name': model_name,
         'train_acc': train_acc,
@@ -533,7 +999,8 @@ if __name__ == "__main__":
             model_standard,
             train_loader,
             valid_loader,
-            test_loader
+            test_loader,
+            visualize_trajectory=(trial == 0)  # Visualize only first trial
         )
         result_standard['trial'] = trial + 1
         result_standard['rho'] = RHO_BASELINE
@@ -621,7 +1088,8 @@ if __name__ == "__main__":
                     model_antisym,
                     train_loader,
                     valid_loader,
-                    test_loader
+                    test_loader,
+                    visualize_trajectory=(trial == 0)  # Visualize only first trial
                 )
                 result_antisym['coupling_epsilon'] = coup_eps
                 result_antisym['rho'] = rho_val
@@ -771,7 +1239,7 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     
     # Save results to file
-    result_file = "results_smnist_ron_antisymmetric.txt"
+    result_file = os.path.join(RESULTS_DIR, "results_summary.txt")
     with open(result_file, 'w') as f:
         f.write("sMNIST RON Antisymmetric Coupling Results\n")
         f.write("="*80 + "\n\n")
@@ -812,6 +1280,13 @@ if __name__ == "__main__":
             f.write("\n")
             f.write(f"  Saturation: {r['saturated_pct']:.2f}%\n\n")
     
-    print(f"\nResults saved to: {result_file}")
-    print(f"Eigenvalue spectrum plots saved to: {RESULTS_DIR}/")
-    print(f"Summary comparison plot: {RESULTS_DIR}/spectral_radius_comparison.png")
+    print(f"\n{'='*80}")
+    print("RESULTS SAVED")
+    print(f"{'='*80}")
+    print(f"Text results: {result_file}")
+    print(f"Eigenvalue spectrum plots: {RESULTS_DIR}/eigenspectrum_*.png")
+    print(f"Phase space trajectories (3D): {RESULTS_DIR}/trajectory_3d_*.png")
+    print(f"Phase space trajectories (2D): {RESULTS_DIR}/trajectory_2d_*.png")
+    print(f"Temporal dynamics: {RESULTS_DIR}/temporal_*.png")
+    print(f"Spectral comparison: {RESULTS_DIR}/spectral_radius_comparison.png")
+    print(f"{'='*80}\n")
