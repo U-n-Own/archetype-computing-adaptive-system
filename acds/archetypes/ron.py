@@ -114,7 +114,9 @@ class RandomizedOscillatorsNetwork(nn.Module):
 
         h2h = get_hidden_topology(n_hid, topology, sparsity, reservoir_scaler)
         if topology != 'antisymmetric':
-            h2h = spectral_norm_scaling(h2h, rho)              
+            h2h = spectral_norm_scaling(h2h, rho)
+        # Ensure h2h is on the correct device
+        h2h = h2h.to(device)
         self.h2h = nn.Parameter(h2h, requires_grad=False)
 
         # add the cycle kernel for cyclic feedback if needed
@@ -127,16 +129,16 @@ class RandomizedOscillatorsNetwork(nn.Module):
             # nothing
             pass
         
-        x2h = torch.rand(n_inp, n_hid) * input_scaling
+        x2h = torch.rand(n_inp, n_hid, device=device) * input_scaling
         self.x2h = nn.Parameter(x2h, requires_grad=False)
-        bias = (torch.rand(n_hid) * 2 - 1) * input_scaling
+        bias = (torch.rand(n_hid, device=device) * 2 - 1) * input_scaling
         self.bias = nn.Parameter(bias, requires_grad=False)
         
         # Initialize antisymmetric coupling matrices if enabled
         if self.antisymmetric_coupling:
             # Create coupling matrix C for antisymmetric coupling between layers
             # C will be used for backward coupling, -C^T for forward coupling
-            C_base = torch.rand(n_hid, n_hid) * 0.5 - 0.25  # Random in [-0.25, 0.25]
+            C_base = torch.rand(n_hid, n_hid, device=device) * 0.5 - 0.25  # Random in [-0.25, 0.25]
             
             # Normalize the coupling matrix to prevent instability
             C_base = spectral_norm_scaling(C_base, 0.5)
@@ -370,7 +372,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             first_layer_size = self.layer_units + total_units % n_layers
             
             # implement cycle kernel as the W_h matrix (inout x hidden)
-            cycle_kernel = torch.rand(self.layer_units, last_layer_size) * inter_scaling
+            cycle_kernel = torch.rand(self.layer_units, last_layer_size, device=device) * inter_scaling
             self.ron_reservoir[0].cycle_kernel = nn.Parameter(cycle_kernel, requires_grad=False)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
