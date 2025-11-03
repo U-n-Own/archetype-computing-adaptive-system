@@ -8,11 +8,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.linear_model import Ridge
 from sklearn import preprocessing
+import argparse
 
 # Add the parent directory to the path to import acds
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from acds.archetypes import DeepReservoir
+from acds.archetypes import DeepReservoir, DeepRandomizedOscillatorsNetwork
 
 def compute_spectral_properties(matrix):
     """Compute spectral radius and spectral norm of a matrix."""
@@ -25,13 +26,14 @@ def compute_spectral_properties(matrix):
 def create_reservoir_architectures():
     """Create different reservoir architectures for spectral analysis with adjusted spectral radius."""
     architectures = [
-        {"name": "Fully Connected 100", "n_layers": 1, "units_per_layer": 100, "tot_units": 100, "rho": 0.99},
-        {"name": "2 Layers 50 units", "n_layers": 2, "units_per_layer": 50, "tot_units": 100, "rho": 0.55},
-        {"name": "4 Layers 25 units", "n_layers": 4, "units_per_layer": 25, "tot_units": 100, "rho": 0.67},
-        {"name": "10 Layers 10 units", "n_layers": 10, "units_per_layer": 10, "tot_units": 100, "rho": 0.685},
-        {"name": "20 Layers 5 units", "n_layers": 20, "units_per_layer": 5, "tot_units": 100, "rho": 0.67},
-        {"name": "50 Layers 2 units", "n_layers": 50, "units_per_layer": 2, "tot_units": 100, "rho": 0.695},
-        {"name": "100 Layers 1 unit", "n_layers": 100, "units_per_layer": 1, "tot_units": 100, "rho": 0.99},
+        {"name": "Fully Connected 100", "n_layers": 1, "units_per_layer": 100, "tot_units": 100, "rho": 0.99, "cycle": False},
+        {"name": "2 Layers 50 units", "n_layers": 2, "units_per_layer": 50, "tot_units": 100, "rho": 0.55, "cycle": True},
+        {"name": "4 Layers 25 units", "n_layers": 4, "units_per_layer": 25, "tot_units": 100, "rho": 0.67, "cycle": True},
+        {"name": "5 Layers 20 units NO CYCLE", "n_layers": 5, "units_per_layer": 20, "tot_units": 100, "rho": 0.90, "cycle": False},
+        {"name": "10 Layers 10 units", "n_layers": 10, "units_per_layer": 10, "tot_units": 100, "rho": 0.685, "cycle": True},
+        {"name": "20 Layers 5 units", "n_layers": 20, "units_per_layer": 5, "tot_units": 100, "rho": 0.67, "cycle": True},
+        {"name": "50 Layers 2 units", "n_layers": 50, "units_per_layer": 2, "tot_units": 100, "rho": 0.695, "cycle": True},
+        {"name": "100 Layers 1 unit", "n_layers": 100, "units_per_layer": 1, "tot_units": 100, "rho": 0.99, "cycle": True},
         #{"name": "Fully Connected 50", "n_layers": 1, "units_per_layer": 50, "tot_units": 50, "rho": 0.99},
         #{"name": "2 Layers 25 units", "n_layers": 2, "units_per_layer": 25, "tot_units": 50, "rho": 0.55},
         #{"name": "4 Layers 12 units", "n_layers": 4, "units_per_layer": 12, "tot_units": 50, "rho": 0.57},
@@ -63,12 +65,27 @@ def construct_jacobian(model, device):
     """
     jacobian_blocks = []
     
+    # Determine which reservoir attribute to use (ESN uses 'reservoir', RON uses 'ron_reservoir')
+    reservoir_layers = None
+    if hasattr(model, 'reservoir'):
+        reservoir_layers = model.reservoir
+    elif hasattr(model, 'ron_reservoir'):
+        reservoir_layers = model.ron_reservoir
+    
+    if reservoir_layers is None:
+        return None
+    
     # Extract weight matrices from each layer
     for layer_idx in range(model.n_layers):
-        # Get recurrent weight matrix for this layer - use reservoir instead of layers
-        layer = model.reservoir[layer_idx]
+        layer = reservoir_layers[layer_idx]
+        
+        # For ESN (DeepReservoir)
         if hasattr(layer, 'net') and hasattr(layer.net, 'recurrent_kernel'):
             W_rec = layer.net.recurrent_kernel.detach().cpu().numpy()
+            jacobian_blocks.append(W_rec)
+        # For RON (DeepRandomizedOscillatorsNetwork)
+        elif hasattr(layer, 'h2h'):
+            W_rec = layer.h2h.detach().cpu().numpy()
             jacobian_blocks.append(W_rec)
     
     if not jacobian_blocks:
@@ -97,8 +114,9 @@ def construct_jacobian(model, device):
         for layer_idx in range(model.n_layers):
             next_layer_idx = (layer_idx + 1) % model.n_layers
             
-            # Get projection kernel weights for cycle connections
-            layer = model.reservoir[layer_idx]
+            layer = reservoir_layers[layer_idx]
+            
+            # For ESN - Get projection kernel weights for cycle connections
             if hasattr(layer, 'net') and hasattr(layer.net, 'projection_kernel') and layer.net.projection_kernel is not None:
                 W_proj = layer.net.projection_kernel.detach().cpu().numpy()
                 
@@ -111,6 +129,19 @@ def construct_jacobian(model, device):
                 # Add cycle connection
                 if W_proj.shape[0] == (curr_end - curr_start) and W_proj.shape[1] == (next_end - next_start):
                     total_jacobian[next_start:next_end, curr_start:curr_end] = W_proj.T
+            # For RON - Get cycle kernel weights
+            elif hasattr(layer, 'cycle_kernel') and layer.cycle_kernel is not None:
+                W_cycle = layer.cycle_kernel.detach().cpu().numpy()
+                
+                # Calculate positions in the full matrix
+                curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
+                curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
+                next_start = sum(jacobian_blocks[j].shape[0] for j in range(next_layer_idx))
+                next_end = next_start + jacobian_blocks[next_layer_idx].shape[0]
+                
+                # Add cycle connection
+                if W_cycle.shape[0] == (curr_end - curr_start) and W_cycle.shape[1] == (next_end - next_start):
+                    total_jacobian[next_start:next_end, curr_start:curr_end] = W_cycle.T
             elif model.cycle and hasattr(model, 'no_projection') and model.no_projection:
                 # For pure cycle without projection matrices, create identity connections
                 curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
@@ -270,11 +301,16 @@ def compute_jacobian_at_equilibrium(model, device, input_size=1, n_steps=50):
             return np.eye(100)  # Default size
 
 
-def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
+def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=False):
     """Analyze spectral properties of different reservoir architectures."""
     architectures = create_reservoir_architectures()
     results = []
     
+    print("="*60)
+    if use_ron:
+        print("Using RON (Randomized Oscillators Network)")
+    else:
+        print("Using ESN (Echo State Network / DeepReservoir)")
     print("="*60)
     
     for arch in tqdm(architectures, desc="Analyzing architectures"):
@@ -285,23 +321,49 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
         
         try:
             # Create the model with cycle connections and adjusted spectral radius
-            # Use the EXACT same parameters as memorycapacity.py
             units_per_layer = arch['tot_units'] // arch['n_layers']
-            model = DeepReservoir(
-                input_size=1,
-                tot_units=arch['tot_units'],  # Use the specified total units
-                n_layers=arch['n_layers'],
-                concat=True,
-                spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
-                inter_scaling=0.0051,  # FIXED: Use same as input_scaling (like memorycapacity.py)
-                input_scaling=0.0051,
-                connectivity_recurrent=units_per_layer,  # Use same calculation as memorycapacity.py
-                connectivity_input=units_per_layer,
-                connectivity_inter=1,  # FIXED: Use same as memorycapacity.py
-                leaky=1.0,
-                linear=True,
-                cycle=True,  # Enable cycle connections
-            ).to(device)
+            use_cycle = arch.get('cycle', True)  # Default to True if not specified
+            
+            if use_ron:
+                # RON parameters as specified
+                dt = 0.5923
+                gamma = 1.632
+                epsilon = 0.78
+                input_scaling = 0.2
+                inter_scaling = 0.2
+                
+                model = DeepRandomizedOscillatorsNetwork(
+                    n_inp=1,
+                    total_units=arch['tot_units'],
+                    n_layers=arch['n_layers'],
+                    dt=dt,
+                    gamma=gamma,
+                    epsilon=epsilon,
+                    rho=arch['rho'],  # Use architecture-specific spectral radius
+                    input_scaling=input_scaling,
+                    inter_scaling=inter_scaling,
+                    topology="full",
+                    concat=True,
+                    cycle=use_cycle,
+                    device=device,
+                ).to(device)
+            else:
+                # ESN parameters (original)
+                model = DeepReservoir(
+                    input_size=1,
+                    tot_units=arch['tot_units'],  # Use the specified total units
+                    n_layers=arch['n_layers'],
+                    concat=True,
+                    spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
+                    inter_scaling=0.0051,  # FIXED: Use same as input_scaling (like memorycapacity.py)
+                    input_scaling=0.0051,
+                    connectivity_recurrent=units_per_layer,  # Use same calculation as memorycapacity.py
+                    connectivity_input=units_per_layer,
+                    connectivity_inter=1,  # FIXED: Use same as memorycapacity.py
+                    leaky=1.0,
+                    linear=True,
+                    cycle=use_cycle,  # Use architecture-specific cycle setting
+                ).to(device)
             
 
             
@@ -333,6 +395,7 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu")):
                     'n_layers': arch['n_layers'],
                     'units_per_layer': arch['units_per_layer'],
                     'target_rho': arch['rho'],  # Add target spectral radius
+                    'cycle': use_cycle,  # Add cycle information
                     # Weight-based Jacobian properties
                     'spectral_radius': spectral_radius,
                     'spectral_norm': spectral_norm,
@@ -398,9 +461,15 @@ def plot_eigenvalues_distribution(results, save_path=None):
         ax = axes_flat[i]
         eigenvals = result['eigenvalues']
         
+        # Highlight non-cycle architectures with different marker
+        cycle_label = "" if result.get('cycle', True) else " [NO CYCLE]"
+        marker_style = 'o' if result.get('cycle', True) else 's'  # square for no cycle
+        edge_color = 'black' if result.get('cycle', True) else 'red'
+        edge_width = 0.5 if result.get('cycle', True) else 1.5
+        
         # Plot eigenvalues
         ax.scatter(eigenvals.real, eigenvals.imag, alpha=0.7, s=40, c=[color], 
-                  edgecolors='black', linewidth=0.5)
+                  edgecolors=edge_color, linewidth=edge_width, marker=marker_style)
         
         # Add unit circle
         theta = np.linspace(0, 2*np.pi, 100)
@@ -408,7 +477,7 @@ def plot_eigenvalues_distribution(results, save_path=None):
         
         ax.set_xlabel('Real Part')
         ax.set_ylabel('Imaginary Part')
-        ax.set_title(f"{result['n_layers']} Layers ({result['units_per_layer']} units/layer)\nρ={result['spectral_radius']:.4f}")
+        ax.set_title(f"{result['n_layers']} Layers ({result['units_per_layer']} units/layer){cycle_label}\nρ={result['spectral_radius']:.4f}")
         ax.grid(True, alpha=0.3)
         ax.set_aspect('equal')
         
@@ -588,7 +657,7 @@ def plot_spectral_properties_vs_configuration(results, save_path=None):
 
 
 
-def run_spectral_analysis():
+def run_spectral_analysis(use_ron=False):
     """Main function to run the spectral analysis."""
     print("="*80)
     
@@ -599,20 +668,118 @@ def run_spectral_analysis():
     np.random.seed(42)
     
     # Run analysis
-    results = analyze_reservoir_spectral_properties(device)
+    results = analyze_reservoir_spectral_properties(device, use_ron=use_ron)
+    
+    # Determine model type for file naming
+    model_type = "ron" if use_ron else "esn"
+    path = f'experiments/results_analysis_{model_type}'
+    
+    # Create the directory if it doesn't exist
+    import os
+    os.makedirs(path, exist_ok=True)
+    
+    # Save detailed log text file
+    log_path = os.path.join(path, f'spectral_analysis_log_{model_type}.txt')
+    with open(log_path, 'w') as f:
+        f.write("="*120 + "\n")
+        f.write(f"Spectral Analysis Results - {'RON' if use_ron else 'ESN'}\n")
+        f.write("="*120 + "\n\n")
+        
+        # Summary table
+        f.write(f"{'Config':<25} {'L':<3} {'U/L':<4} {'Cycle':<6} {'Target ρ':<9} {'Actual ρ':<10} {'Eq ρ':<10} {'MC Total':<10} {'MC Avg':<8} {'Status':<8}\n")
+        f.write("-" * 130 + "\n")
+        
+        for result in results:
+            status = "STABLE" if result['spectral_radius'] < 1.0 else "UNSTAB"
+            cycle_str = "YES" if result.get('cycle', True) else "NO"
+            f.write(f"{result['architecture']:<25} "
+                  f"{result['n_layers']:<3} "
+                  f"{result['units_per_layer']:<4} "
+                  f"{cycle_str:<6} "
+                  f"{result['target_rho']:<9.2f} "
+                  f"{result['spectral_radius']:<10.4f} "
+                  f"{result['eq_spectral_radius']:<10.4f} "
+                  f"{result['total_memory_capacity']:<10.4f} "
+                  f"{result['avg_memory_per_delay']:<8.4f} "
+                  f"{status:<8}\n")
+        
+        f.write("\n" + "="*120 + "\n")
+        f.write("Detailed Analysis:\n")
+        f.write("="*120 + "\n\n")
+        
+        f.write("Stability (Spectral Radius < 1):\n")
+        stable_weight = sum(1 for r in results if r['spectral_radius'] < 1.0)
+        stable_eq = sum(1 for r in results if r['eq_spectral_radius'] < 1.0)
+        f.write(f"  Weight Jacobian: {stable_weight}/{len(results)}\n")
+        f.write(f"  Equilibrium Jacobian: {stable_eq}/{len(results)}\n\n")
+        
+        f.write("Memory Capacity:\n")
+        best_mc = max(results, key=lambda r: r['total_memory_capacity'])
+        worst_mc = min(results, key=lambda r: r['total_memory_capacity'])
+        f.write(f"  Best: {best_mc['architecture']} (MC = {best_mc['total_memory_capacity']:.4f})\n")
+        f.write(f"  Worst: {worst_mc['architecture']} (MC = {worst_mc['total_memory_capacity']:.4f})\n\n")
+        
+        # Detailed per-architecture results
+        f.write("\n" + "="*120 + "\n")
+        f.write("Per-Architecture Detailed Results:\n")
+        f.write("="*120 + "\n\n")
+        
+        for i, result in enumerate(results, 1):
+            f.write(f"\n{i}. {result['architecture']}\n")
+            f.write("-" * 80 + "\n")
+            f.write(f"  Number of Layers: {result['n_layers']}\n")
+            f.write(f"  Units per Layer: {result['units_per_layer']}\n")
+            f.write(f"  Total Units: {result['total_units']}\n")
+            f.write(f"  Cycle Connections: {'YES' if result.get('cycle', True) else 'NO'}\n")
+            f.write(f"  Target Spectral Radius: {result['target_rho']:.4f}\n")
+            f.write(f"\n  Weight Jacobian:\n")
+            f.write(f"    Spectral Radius: {result['spectral_radius']:.6f}\n")
+            f.write(f"    Spectral Norm: {result['spectral_norm']:.6f}\n")
+            f.write(f"    Matrix Shape: {result['jacobian_shape']}\n")
+            f.write(f"\n  Equilibrium Jacobian:\n")
+            f.write(f"    Spectral Radius: {result['eq_spectral_radius']:.6f}\n")
+            f.write(f"    Spectral Norm: {result['eq_spectral_norm']:.6f}\n")
+            f.write(f"    Matrix Shape: {result['eq_jacobian_shape']}\n")
+            f.write(f"\n  Memory Capacity:\n")
+            f.write(f"    Total MC: {result['total_memory_capacity']:.6f}\n")
+            f.write(f"    Average MC per Delay: {result['avg_memory_per_delay']:.6f}\n")
+            f.write(f"    Number of Delays: {len(result['memory_capacity_per_delay'])}\n")
+            
+            # Show first 10 and last 10 delays
+            if result['memory_capacity_per_delay']:
+                delays = sorted(result['memory_capacity_per_delay'].keys())
+                f.write(f"\n    Memory Capacity by Delay (first 10):\n")
+                for delay in delays[:10]:
+                    mc_val = result['memory_capacity_per_delay'][delay]
+                    f.write(f"      Delay {delay:3d}: {mc_val:.6f}\n")
+                
+                if len(delays) > 20:
+                    f.write(f"      ... ({len(delays)-20} delays omitted) ...\n")
+                
+                if len(delays) > 10:
+                    f.write(f"\n    Memory Capacity by Delay (last 10):\n")
+                    for delay in delays[-10:]:
+                        mc_val = result['memory_capacity_per_delay'][delay]
+                        f.write(f"      Delay {delay:3d}: {mc_val:.6f}\n")
+            
+            f.write("\n")
+    
+    print(f"Detailed log saved to: {log_path}")
     
     # Print summary
     print("\n" + "="*120)
     print("="*120)
     
-    print(f"{'Config':<20} {'L':<3} {'U/L':<4} {'Target ρ':<9} {'Actual ρ':<10} {'Eq ρ':<10} {'MC Total':<10} {'MC Avg':<8} {'Status':<8}")
-    print("-" * 120)
+    print(f"{'Config':<25} {'L':<3} {'U/L':<4} {'Cycle':<6} {'Target ρ':<9} {'Actual ρ':<10} {'Eq ρ':<10} {'MC Total':<10} {'MC Avg':<8} {'Status':<8}")
+    print("-" * 130)
     
     for result in results:
         status = "🟢STABLE" if result['spectral_radius'] < 1.0 else "🔴UNSTAB"
-        print(f"{result['architecture']:<20} "
+        cycle_str = "YES" if result.get('cycle', True) else "NO"
+        print(f"{result['architecture']:<25} "
               f"{result['n_layers']:<3} "
               f"{result['units_per_layer']:<4} "
+              f"{cycle_str:<6} "
               f"{result['target_rho']:<9.2f} "
               f"{result['spectral_radius']:<10.4f} "
               f"{result['eq_spectral_radius']:<10.4f} "
@@ -642,20 +809,14 @@ def run_spectral_analysis():
     
     print("\nPlotting...")
     
-    path = 'experiments/results_analysis'
-    
-    # Create the directory if it doesn't exist
-    import os
-    os.makedirs(path, exist_ok=True)
-    
     # Plot 1: Eigenvalues distribution for all configurations
-    fig1 = plot_eigenvalues_distribution(results, os.path.join(path, 'eigenvalue_distributions.png'))
+    fig1 = plot_eigenvalues_distribution(results, os.path.join(path, f'eigenvalue_distributions_{model_type}.png'))
     
     # Plot 2: Memory capacity over delay until the last one
-    fig2 = plot_memory_capacity_vs_delay(results, os.path.join(path, 'memory_capacity_vs_delay.png'))
+    fig2 = plot_memory_capacity_vs_delay(results, os.path.join(path, f'memory_capacity_vs_delay_{model_type}.png'))
     
     # Plot 3: Spectral properties vs configuration (adding more layers)
-    fig3 = plot_spectral_properties_vs_configuration(results, os.path.join(path, 'spectral_properties_vs_configuration.png'))
+    fig3 = plot_spectral_properties_vs_configuration(results, os.path.join(path, f'spectral_properties_vs_configuration_{model_type}.png'))
     
     # Show the plots
     if fig1 is not None:
@@ -665,12 +826,16 @@ def run_spectral_analysis():
     if fig3 is not None:
         plt.show()
     
-    print(f"  1.Eigenvalues Distribution: eigenvalue_distributions.png")
-    print(f"  2.Memory Capacity vs Delay: memory_capacity_vs_delay.png") 
-    print(f"  3.Spectral Properties vs Configuration: spectral_properties_vs_configuration.png")
+    print(f"  1.Eigenvalues Distribution: {path}/eigenvalue_distributions_{model_type}.png")
+    print(f"  2.Memory Capacity vs Delay: {path}/memory_capacity_vs_delay_{model_type}.png") 
+    print(f"  3.Spectral Properties vs Configuration: {path}/spectral_properties_vs_configuration_{model_type}.png")
     
     return results
 
 if __name__ == "__main__":
-
-    results = run_spectral_analysis()
+    parser = argparse.ArgumentParser(description='Spectral Analysis of Reservoir Architectures')
+    parser.add_argument('--ron', action='store_true', 
+                        help='Use RON (Randomized Oscillators Network) instead of ESN')
+    args = parser.parse_args()
+    
+    results = run_spectral_analysis(use_ron=args.ron)

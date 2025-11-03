@@ -344,9 +344,13 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         last_h_size = self.layer_units + total_units % n_layers
         
         for _ in range(n_layers - 1):
+            # In cycle mode, all layers receive the original input
+            # In non-cycle mode, layers receive input from previous layer
+            layer_input_size = n_inp if self.cycle else last_h_size
+            
             deepron_layers.append(
                 RandomizedOscillatorsNetwork(
-                    n_inp=last_h_size, n_hid=self.layer_units,
+                    n_inp=layer_input_size, n_hid=self.layer_units,
                     input_scaling=input_scaling_others,
                     dt= dt,
                     gamma=gamma,
@@ -367,13 +371,21 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         
         # Initialize cycle kernels if cycle is enabled
         if self.cycle:
-            # The first layer needs a cycle kernel to receive feedback from the last layer
-            last_layer_size = self.layer_units
-            first_layer_size = self.layer_units + total_units % n_layers
-            
-            # implement cycle kernel as the W_h matrix (inout x hidden)
-            cycle_kernel = torch.rand(self.layer_units, last_layer_size, device=device) * inter_scaling
-            self.ron_reservoir[0].cycle_kernel = nn.Parameter(cycle_kernel, requires_grad=False)
+            # Each layer receives a cycle kernel for ring topology
+            # Layer l receives feedback from layer l-1, and layer 0 receives from layer L
+            for i in range(n_layers):
+                if i == 0:
+                    # First layer receives from last layer (closing the ring)
+                    prev_layer_size = self.layer_units
+                else:
+                    # Other layers receive from previous layer
+                    prev_layer_size = self.layer_units if i > 1 else self.layer_units + total_units % n_layers
+                
+                current_layer_size = self.layer_units if i > 0 else self.layer_units + total_units % n_layers
+                
+                # Cycle kernel: (prev_layer_size, current_layer_size) to match h_last @ cycle_kernel
+                cycle_kernel = torch.rand(prev_layer_size, current_layer_size, device=device) * inter_scaling
+                self.ron_reservoir[i].cycle_kernel = nn.Parameter(cycle_kernel, requires_grad=False)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Forward pass on the layers of the DeepRON a given input time-series.
@@ -446,7 +458,8 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                 layer_states.append(stacked_states[:, -1, :])
                 
         elif self.cycle:
-            # Initialize hidden states for all layers
+            # Ring topology: all layers receive cycle feedback from previous layer
+            # Layer 0 receives from layer L-1 (closing the ring)
             batch_size, seq_len, _ = x.shape
             
             # Initialize hidden states and derivatives for all layers
@@ -459,19 +472,34 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             layer_states_all = [[] for _ in range(len(self.ron_reservoir))]
 
             for t in range(seq_len):
-                xt = x[:, t, :]
-                # Save last layer's previous hidden state for feedback
-                last_layer_hidden_prev = h_states[-1].clone()
+                current_input = x[:, t, :]  # All layers receive original input in cycle mode
+                new_h_states = []
+                new_hz_states = []
                 
                 for i, ron_layer in enumerate(self.ron_reservoir):
+                    # Get previous layer's output for ring connection
                     if i == 0:
-                        # Pass cyclic feedback from last layer to first layer
-                        h_states[i], hz_states[i] = ron_layer.cell(xt, h_states[i], hz_states[i], first_layer=True, h_last=last_layer_hidden_prev)
+                        # First layer gets feedback from last layer (closing the ring)
+                        prev_layer_output = h_states[-1] if len(self.ron_reservoir) > 1 else torch.zeros(batch_size, ron_layer.n_hid, device=x.device)
                     else:
-                        # Pass output from previous layer as input
-                        h_states[i], hz_states[i] = ron_layer.cell(h_states[i-1], h_states[i], hz_states[i], first_layer=False)
+                        prev_layer_output = h_states[i-1]
                     
-                    layer_states_all[i].append(h_states[i])
+                    # All layers receive cycle input (ring topology)
+                    new_h, new_hz = ron_layer.cell(
+                        current_input,
+                        h_states[i],  # Previous hidden state of this layer
+                        hz_states[i],  # Previous hidden derivative of this layer
+                        first_layer=True,  # All layers can receive cycle input
+                        h_last=prev_layer_output  # Ring connection input
+                    )
+                    
+                    new_h_states.append(new_h)
+                    new_hz_states.append(new_hz)
+                    layer_states_all[i].append(new_h)
+                
+                # Update hidden states for next timestep
+                h_states = new_h_states
+                hz_states = new_hz_states
 
             # Stack the layer states over time dimension
             for i in range(len(self.ron_reservoir)):

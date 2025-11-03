@@ -92,7 +92,7 @@ print("Test 2: DeepRON with Antisymmetric Coupling")
 print("=" * 60)
 
 # Test different coupling epsilon values
-coupling_epsilons = [0.01, 0.1, 0.5]
+coupling_epsilons = [5, 10, 20, 50]
 
 for coup_eps in coupling_epsilons:
     print(f"\n--- Coupling epsilon: {coup_eps} ---")
