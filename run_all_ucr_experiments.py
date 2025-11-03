@@ -78,10 +78,9 @@ def run_search(
     # Run search
     start_time = time.time()
     try:
+        # Show output in real-time instead of capturing it
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=args.max_time_per_experiment,
         )
         
@@ -117,13 +116,12 @@ def run_search(
                 }
         else:
             print(f"✗ Search failed with return code {result.returncode}")
-            print(f"Error output: {result.stderr[-500:]}")  # Last 500 chars
             return {
                 'status': 'failed',
                 'dataset': dataset,
                 'model': model_desc,
                 'elapsed': elapsed,
-                'error': result.stderr[-500:],
+                'error': f"Return code {result.returncode}",
             }
     
     except subprocess.TimeoutExpired:
@@ -184,10 +182,9 @@ def run_training(
     # Run training
     start_time = time.time()
     try:
+        # Show output in real-time instead of capturing it
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=args.max_time_per_experiment,
         )
         
@@ -233,7 +230,7 @@ def run_training(
                 'dataset': dataset,
                 'config_file': config_file,
                 'elapsed': elapsed,
-                'error': result.stderr[-500:],
+                'error': f"Return code {result.returncode}",
             }
     
     except subprocess.TimeoutExpired:
