@@ -426,8 +426,8 @@ def main():
     parser.add_argument(
         '--device',
         type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use'
+        default='cpu',
+        help='Device to use (cpu or cuda)'
     )
     parser.add_argument(
         '--dataroot',
@@ -461,9 +461,6 @@ def main():
     )
     
     args = parser.parse_args()
-    
-    # Import torch here after args are parsed
-    import torch
     
     # Run experiments
     if args.phase in ['search', 'both']:
