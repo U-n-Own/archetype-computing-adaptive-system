@@ -165,18 +165,15 @@ def create_model(
     # Merge config and kwargs (kwargs take precedence)
     model_params = {**config, **kwargs}
     
-    # Add device and topology to params
-    model_params['device'] = device
-    if 'topology' not in model_params:
-        model_params['topology'] = topology
-    
-    # Remove parameters that will be passed explicitly
+    # Remove parameters that will be passed explicitly or don't belong to model constructors
     model_params.pop('n_inp', None)
     model_params.pop('input_size', None)
     model_params.pop('output_size', None)
     model_params.pop('reservoir_size', None)
     model_params.pop('total_units', None)
     model_params.pop('tot_units', None)
+    model_params.pop('device', None)  # Device will be set via .to() after construction
+    model_params.pop('topology', None)  # Topology is not a model parameter
     
     if model_type == 'ron':
         model = create_ron_model(
