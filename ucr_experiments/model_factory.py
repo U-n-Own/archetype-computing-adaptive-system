@@ -99,10 +99,14 @@ def create_esn_model(
     Returns:
         ESN model instance
     """
-    # Handle rho vs spectral_radius naming difference
+    # Handle parameter naming differences between search space and DeepReservoir
     # Search space uses 'rho' but DeepReservoir expects 'spectral_radius'
     if 'rho' in kwargs:
         kwargs['spectral_radius'] = kwargs.pop('rho')
+    
+    # Search space uses 'coupling_epsilon' but DeepReservoir expects 'epsilon'
+    if 'coupling_epsilon' in kwargs:
+        kwargs['epsilon'] = kwargs.pop('coupling_epsilon')
     
     if antisymmetric:
         # Antisymmetric configuration: 5 layers with 100 units each

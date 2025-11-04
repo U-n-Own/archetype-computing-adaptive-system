@@ -47,7 +47,7 @@ def create_esn_search_space(trial: optuna.Trial, antisymmetric: bool) -> Dict[st
     """
     config = {
         'n_inp': 1,
-        'rho': trial.suggest_float('rho', 0.1, 0.99),
+        'rho': trial.suggest_float('rho', 0.9, 0.99),
         'input_scaling': trial.suggest_float('input_scaling', 0.1, 2.0),
         'leaky': trial.suggest_float('leaky', 0.0001, 0.1, log=True),
     }
