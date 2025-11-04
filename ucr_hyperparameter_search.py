@@ -71,12 +71,12 @@ def create_ron_search_space(trial: optuna.Trial, antisymmetric: bool) -> Dict[st
     """
     config = {
         'n_inp': 1,
-        'dt': trial.suggest_float('dt', 0.001, 0.1, log=True),
+        'dt': trial.suggest_float('dt', 0.001, 1, log=True),
         'gamma': trial.suggest_float('gamma', 0.1, 5.0),
         'epsilon': trial.suggest_float('epsilon', 0.1, 5.0),
         'gamma_range': trial.suggest_float('gamma_range', 0.0, 2.0),
         'epsilon_range': trial.suggest_float('epsilon_range', 0.0, 2.0),
-        'rho': trial.suggest_float('rho', 0.1, 0.99),
+        'rho': trial.suggest_float('rho', 0.9, 0.99),
         'input_scaling': trial.suggest_float('input_scaling', 0.1, 10.0),
         'reservoir_scaler': trial.suggest_float('reservoir_scaler', 0.0, 2.0),
         'diffusive_gamma': trial.suggest_float('diffusive_gamma', 0.0, 0.1),
