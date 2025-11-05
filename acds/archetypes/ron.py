@@ -170,7 +170,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         hy = hy.to(x.dtype)
         
         cycle_part = 0
-        antisymmetric_part = 0
+        antisymmetric_part = torch.zeros_like(hy)
         
         if self.cycle and first_layer and h_last is not None:
             # Project h_last with cycle_kernel and add to the input

@@ -3,11 +3,12 @@ import warnings
 from typing import List
 import os
 import numpy as np
+import torch
 import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
-import random
+
 from experiments.utils import set_seed
 
 from acds.archetypes import (
@@ -17,7 +18,8 @@ from acds.archetypes import (
     PhysicallyImplementableRandomizedOscillatorsNetwork,
     MultistablePhysicallyImplementableRandomizedOscillatorsNetwork,
 )
-from acds.benchmarks import get_adiac_data
+from acds.benchmarks.ucr import get_ucr_data
+
 
 parser = argparse.ArgumentParser(description="training parameters")
 parser.add_argument("--dataroot", type=str)
@@ -80,7 +82,7 @@ parser.add_argument(
     type=str,
     default="full",
     choices=["full", "ring", "band", "lower", "toeplitz", "orthogonal"],
-    help="Topology of the reservoir (structure of intra-layer recurrent matrix)",
+    help="Topology of the reservoir",
 )
 parser.add_argument(
     "--sparsity", type=float, default=0.0, help="Sparsity of the reservoir"
@@ -94,7 +96,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-# Set random seed for reproducibility (match adiac_search_ray.py and utils.py)
+# Set random seed for reproducibility
 SEED = 42
 set_seed(SEED)
 
@@ -132,21 +134,20 @@ def test(data_loader, classifier, scaler):
 
 
 n_inp = 1
-n_out = 37  # classes
+n_out = 2  # FordB classes (not used directly in RC pipeline)
 gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
 epsilon = (
     args.epsilon - args.epsilon_range / 2.0,
     args.epsilon + args.epsilon_range / 2.0,
 )
 
-max_test_accs: List[float] = []
 if args.trials > 1:
     assert args.use_test, "Multiple runs are only for the final test phase with the test set."
-    train_loader, valid_loader, test_loader = get_adiac_data(
+    train_loader, valid_loader, test_loader = get_ucr_data(
         args.dataroot, args.batch, args.batch, whole_train=True
     )
 else:
-    train_loader, valid_loader, test_loader = get_adiac_data(
+    train_loader, valid_loader, test_loader = get_ucr_data(
         args.dataroot, args.batch, args.batch
     )
 
@@ -182,9 +183,9 @@ for i in range(args.trials):
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
+            device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
-            device=device,
         ).to(device)
     elif args.deepron:
         model = DeepRandomizedOscillatorsNetwork(
@@ -198,10 +199,9 @@ for i in range(args.trials):
             rho=args.rho,
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,
-            # This is not used in ron, to scale internal recurrent use reservoir scalre
             reservoir_scaler=args.reservoir_scaler,
             device=device,
-            connectivity_input=int((1-args.sparsity *n_inp)),  
+            connectivity_input=int((1-args.sparsity *n_inp)),
             connectivity_inter=int(args.n_hid / args.n_layers),
             concat=True,
             topology=args.topology,
@@ -255,15 +255,15 @@ for i in range(args.trials):
 
 suffix_ac = "_AC" if args.antisymmetric else ""
 if args.ron:
-    f = open(os.path.join(args.resultroot, f"Adiac_log_RON_{args.topology}{suffix_ac}{args.resultsuffix}.txt"), "a")
+    f = open(os.path.join(args.resultroot, f"FordB_log_RON_{args.topology}{suffix_ac}{args.resultsuffix}.txt"), "a")
 elif args.deepron:
-    f = open(os.path.join(args.resultroot, f"Adiac_log_DeepRON_{args.topology}{suffix_ac}{args.resultsuffix}.txt"), "a")
+    f = open(os.path.join(args.resultroot, f"FordB_log_DeepRON_{args.topology}{suffix_ac}{args.resultsuffix}.txt"), "a")
 elif args.pron:
-    f = open(os.path.join(args.resultroot, f"Adiac_log_PRON{suffix_ac}{args.resultsuffix}.txt"), "a")
+    f = open(os.path.join(args.resultroot, f"FordB_log_PRON{suffix_ac}{args.resultsuffix}.txt"), "a")
 elif args.mspron:
-    f = open(os.path.join(args.resultroot, f"Adiac_log_MSPRON{suffix_ac}{args.resultsuffix}.txt"), "a")
+    f = open(os.path.join(args.resultroot, f"FordB_log_MSPRON{suffix_ac}{args.resultsuffix}.txt"), "a")
 elif args.esn:
-    f = open(os.path.join(args.resultroot, f"Adiac_log_ESN{suffix_ac}{args.resultsuffix}.txt"), "a")
+    f = open(os.path.join(args.resultroot, f"FordB_log_ESN{suffix_ac}{args.resultsuffix}.txt"), "a")
 else:
     raise ValueError("Wrong model choice.")
 
