@@ -1,6 +1,6 @@
 """
 UCR Time Series Dataset Loader
-Handles downloading and loading UCR time series datasets using aeon toolkit.
+Handles downloading and loading UCR time series datasets using aeon library.
 """
 import os
 from pathlib import Path
@@ -10,15 +10,17 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
 
+from acds.benchmarks.rc_dataset import RCDataset
+
+# Try to import aeon
 try:
     from aeon.datasets import load_classification
     AEON_AVAILABLE = True
 except ImportError:
     AEON_AVAILABLE = False
     print("Warning: aeon library not available. Install with: pip install aeon")
-
-from acds.benchmarks.rc_dataset import RCDataset
 
 
 # UCR Dataset metadata
@@ -55,38 +57,155 @@ def load_ucr_with_aeon(dataset_name: str) -> Tuple[np.ndarray, np.ndarray, np.nd
     """Load UCR dataset using aeon library.
     
     Args:
-        dataset_name: Name of the dataset (e.g., 'FordA', 'OliveOil')
+        dataset_name: Name of the dataset (e.g., 'Adiac', 'FordA')
         
     Returns:
         Tuple of (X_train, y_train, X_test, y_test)
+        X arrays have shape (n_samples, n_channels, seq_length)
+        y arrays have shape (n_samples,)
     """
     if not AEON_AVAILABLE:
         raise ImportError(
-            "aeon library is required but not installed. "
-            "Install with: pip install aeon"
+            "aeon library is required. Install with: pip install aeon"
         )
     
     print(f"Loading {dataset_name} using aeon...")
     
-    # Load data from aeon
-    X_train, y_train = load_classification(dataset_name, split="train", return_metadata=False)
-    X_test, y_test = load_classification(dataset_name, split="test", return_metadata=False)
+    # Load the dataset
+    X_train, y_train = load_classification(dataset_name, split="train")
+    X_test, y_test = load_classification(dataset_name, split="test")
     
-    # Convert from 3D (n_samples, n_channels, n_timepoints) to 2D (n_samples, n_timepoints)
-    # Most UCR datasets are univariate
-    if len(X_train.shape) == 3 and X_train.shape[1] == 1:
-        X_train = X_train.squeeze(1)  # Remove channel dimension
-    if len(X_test.shape) == 3 and X_test.shape[1] == 1:
+    # Convert to numpy arrays if needed
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
+    X_test = np.array(X_test)
+    y_test = np.array(y_test)
+    
+    # aeon returns shape (n_samples, n_channels, seq_length)
+    # For univariate datasets, squeeze the channel dimension
+    if X_train.shape[1] == 1:
+        X_train = X_train.squeeze(1)  # (n_samples, seq_length)
         X_test = X_test.squeeze(1)
+    
+    print(f"✓ Loaded {dataset_name} with aeon:")
+    print(f"    Train shape: {X_train.shape}, labels: {y_train.shape}")
+    print(f"    Test shape: {X_test.shape}, labels: {y_test.shape}")
+    print(f"    Unique classes: {np.unique(y_train)}")
     
     return X_train, y_train, X_test, y_test
 
 
+def download_ucr_dataset(dataset_name: str, root_path: Path) -> Path:
+    """Download a UCR dataset if it doesn't exist.
+    
+    Args:
+        dataset_name: Name of the dataset (e.g., 'FordA')
+        root_path: Root directory to store datasets
+        
+    Returns:
+        Path to the dataset directory
+    """
+    if dataset_name not in UCR_DATASETS:
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(UCR_DATASETS.keys())}")
+    
+    dataset_path = root_path / dataset_name
+    dataset_path.mkdir(parents=True, exist_ok=True)
+    
+    # Check if already downloaded (try different extensions)
+    already_downloaded = False
+    for ext in ['.tsv', '.txt', '.ts', '.arff']:
+        train_file = dataset_path / f"{dataset_name}_TRAIN{ext}"
+        test_file = dataset_path / f"{dataset_name}_TEST{ext}"
+        if train_file.exists() and test_file.exists():
+            already_downloaded = True
+            break
+    
+    if already_downloaded:
+        print(f"✓ Dataset {dataset_name} already exists at {dataset_path}")
+        return dataset_path
+    
+    # Download the dataset
+    url = UCR_DATASETS[dataset_name]['url']
+    zip_path = dataset_path / f"{dataset_name}.zip"
+    
+    print(f"Downloading {dataset_name} from {url}...")
+    try:
+        urllib.request.urlretrieve(url, zip_path)
+        print(f"✓ Downloaded to {zip_path}")
+        
+        # Extract the zip file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(dataset_path)
+        print(f"✓ Extracted to {dataset_path}")
+        
+        # Clean up zip file
+        zip_path.unlink()
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to download {dataset_name}: {e}")
+    
+    return dataset_path
+
+
+def load_ucr_file(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+    """Load a UCR time series file.
+    
+    Args:
+        file_path: Path to the data file (.tsv, .txt, .ts, etc.)
+        
+    Returns:
+        Tuple of (data, labels) as numpy arrays
+    """
+    data = None
+    last_error = None
+    
+    # Try different delimiters
+    # Try whitespace first since it's most common for UCR datasets
+    for delimiter in [None, '\t', ',']:  # None means whitespace
+        try:
+            if delimiter is None:
+                data = np.genfromtxt(file_path)
+            else:
+                data = np.genfromtxt(file_path, delimiter=delimiter)
+            
+            # Check if data was loaded successfully and has the right shape
+            # UCR datasets should be 2D: (n_samples, n_features+1)
+            if data is not None and data.size > 0 and len(data.shape) == 2:
+                break
+            else:
+                # Wrong shape, try next delimiter
+                data = None
+                continue
+        except Exception as e:
+            last_error = e
+            data = None
+            continue
+    
+    if data is None or data.size == 0:
+        raise RuntimeError(
+            f"Failed to load {file_path}. Last error: {last_error}"
+        )
+    
+    # Handle both 1D and 2D arrays
+    if len(data.shape) == 1:
+        # If it's 1D, might be a single sample or malformed file
+        raise ValueError(
+            f"Loaded data from {file_path} is 1-dimensional with shape {data.shape}. "
+            f"Expected 2-dimensional data with shape (n_samples, n_features+1)."
+        )
+    
+    # First column is label, rest is time series
+    labels = data[:, 0]
+    series = data[:, 1:]
+    
+    return series, labels
+
+
 def get_ucr_data(
     dataset_name: str,
-    root_path: os.PathLike = None,
-    bs_train: int = 32,
-    bs_test: int = 32,
+    root_path: os.PathLike,
+    bs_train: int,
+    bs_test: int,
     valid_split: float = 0.2,
     whole_train: bool = False,
     for_rc: bool = True,
@@ -97,55 +216,106 @@ def get_ucr_data(
     
     Args:
         dataset_name: Name of the UCR dataset
-        root_path: Root directory for datasets (not used when use_aeon=True)
+        root_path: Root directory for datasets
         bs_train: Batch size for training
         bs_test: Batch size for validation/test
         valid_split: Fraction of training data to use for validation
         whole_train: If True, use all training data (no validation split)
         for_rc: If True, return RCDataset format
-        download: If True, download dataset if not found (handled by aeon)
+        download: If True, download dataset if not found
         use_aeon: If True, use aeon library to load data (recommended)
         
     Returns:
         Tuple of (train_loader, valid_loader, test_loader, metadata)
     """
-    # Load data using aeon (preferred method)
-    if use_aeon:
-        train_series, train_labels, test_series, test_labels = load_ucr_with_aeon(dataset_name)
+    root_path = Path(root_path)
+    
+    # Use aeon if available and requested
+    if use_aeon and AEON_AVAILABLE:
+        try:
+            train_series, train_labels, test_series, test_labels = load_ucr_with_aeon(dataset_name)
+        except Exception as e:
+            print(f"Warning: Failed to load with aeon ({e}), falling back to manual loading")
+            use_aeon = False
     else:
-        # Fallback: manual loading (deprecated)
-        raise NotImplementedError(
-            "Manual loading is deprecated. Please use aeon library. "
-            "Install with: pip install aeon"
-        )
+        use_aeon = False
+    
+    # Fall back to manual loading if aeon not available or failed
+    if not use_aeon:
+        # Download if needed
+        if download:
+            dataset_path = download_ucr_dataset(dataset_name, root_path)
+        else:
+            dataset_path = root_path / dataset_name
+            
+        if not dataset_path.exists():
+            raise FileNotFoundError(f"Dataset not found at {dataset_path}")
+        
+        # Load train and test files
+        # Try different file extensions and naming conventions
+        train_file = None
+        test_file = None
+        
+        for ext in ['.tsv', '.txt', '.ts', '.arff']:
+            potential_train = dataset_path / f"{dataset_name}_TRAIN{ext}"
+            potential_test = dataset_path / f"{dataset_name}_TEST{ext}"
+            
+            if potential_train.exists() and potential_test.exists():
+                train_file = potential_train
+                test_file = potential_test
+                break
+        
+        # Try alternative naming (lowercase)
+        if train_file is None:
+            for ext in ['.tsv', '.txt', '.ts', '.arff']:
+                potential_train = dataset_path / f"train{ext}"
+                potential_test = dataset_path / f"test{ext}"
+                
+                if potential_train.exists() and potential_test.exists():
+                    train_file = potential_train
+                    test_file = potential_test
+                    break
+        
+        if train_file is None or test_file is None:
+            raise FileNotFoundError(
+                f"Could not find train/test files in {dataset_path}. "
+                f"Available files: {list(dataset_path.iterdir())}"
+            )
+            
+        print(f"Loading {dataset_name}...")
+        print(f"  Train file: {train_file}")
+        print(f"  Test file: {test_file}")
+        
+        train_series, train_labels = load_ucr_file(train_file)
+        test_series, test_labels = load_ucr_file(test_file)
     
     # Encode labels to be 0-indexed
     label_encoder = LabelEncoder()
     all_labels = np.concatenate([train_labels, test_labels])
     label_encoder.fit(all_labels)
     
-    train_labels_encoded = label_encoder.transform(train_labels)
-    test_labels_encoded = label_encoder.transform(test_labels)
+    train_labels = label_encoder.transform(train_labels)
+    test_labels = label_encoder.transform(test_labels)
     
-    # Split training into train/validation
+    # Split training into train/validation with stratification
     if whole_train:
         valid_series = train_series[0:0]  # Empty
-        valid_labels_encoded = train_labels_encoded[0:0]
+        valid_labels = train_labels[0:0]
     else:
-        n_valid = int(len(train_series) * valid_split)
-        if n_valid > 0:
-            # Shuffle before split
-            indices = np.random.permutation(len(train_series))
-            train_series = train_series[indices]
-            train_labels_encoded = train_labels_encoded[indices]
-            
-            valid_series = train_series[-n_valid:]
-            valid_labels_encoded = train_labels_encoded[-n_valid:]
-            train_series = train_series[:-n_valid]
-            train_labels_encoded = train_labels_encoded[:-n_valid]
+        if valid_split > 0 and len(train_series) > 10:
+            # Use stratified split with shuffling
+            train_series, valid_series, train_labels, valid_labels = train_test_split(
+                train_series,
+                train_labels,
+                test_size=valid_split,
+                random_state=42,
+                stratify=train_labels,
+                shuffle=True
+            )
         else:
+            # Too few samples for stratification
             valid_series = train_series[0:0]
-            valid_labels_encoded = train_labels_encoded[0:0]
+            valid_labels = train_labels[0:0]
     
     # Create input-output pairs
     def inp_out_pairs(data_x, data_y):
@@ -156,9 +326,9 @@ def get_ucr_data(
             mydata.append(sample)
         return mydata
     
-    train_data = inp_out_pairs(train_series, train_labels_encoded)
-    valid_data = inp_out_pairs(valid_series, valid_labels_encoded)
-    test_data = inp_out_pairs(test_series, test_labels_encoded)
+    train_data = inp_out_pairs(train_series, train_labels)
+    valid_data = inp_out_pairs(valid_series, valid_labels)
+    test_data = inp_out_pairs(test_series, test_labels)
     
     # Create datasets
     if for_rc:
@@ -170,15 +340,15 @@ def get_ucr_data(
         from torch.utils.data import TensorDataset
         train_dataset = TensorDataset(
             torch.FloatTensor(train_series).unsqueeze(-1),
-            torch.LongTensor(train_labels_encoded)
+            torch.LongTensor(train_labels)
         )
         valid_dataset = TensorDataset(
             torch.FloatTensor(valid_series).unsqueeze(-1),
-            torch.LongTensor(valid_labels_encoded)
+            torch.LongTensor(valid_labels)
         )
         test_dataset = TensorDataset(
             torch.FloatTensor(test_series).unsqueeze(-1),
-            torch.LongTensor(test_labels_encoded)
+            torch.LongTensor(test_labels)
         )
     
     # Create dataloaders

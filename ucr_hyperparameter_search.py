@@ -24,31 +24,6 @@ from ucr_experiments.model_factory import create_model
 from ucr_experiments.training import train_and_evaluate
 
 
-# Dataset-specific configurations
-DATASET_CONFIGS = {
-    # Large datasets: 300 units
-    'FordA': {'reservoir_size': 300, 'use_kfold': False},
-    'FordB': {'reservoir_size': 300, 'use_kfold': False},
-    'Adiac': {'reservoir_size': 300, 'use_kfold': False},
-    
-    # Small datasets: 150 units, use k-fold
-    'OliveOil': {'reservoir_size': 150, 'use_kfold': True},
-    'CinCECGTorso': {'reservoir_size': 150, 'use_kfold': True},
-}
-
-
-def get_dataset_config(dataset_name: str) -> Dict[str, Any]:
-    """Get dataset-specific configuration.
-    
-    Args:
-        dataset_name: Name of the dataset
-        
-    Returns:
-        Configuration dictionary with reservoir_size and use_kfold flags
-    """
-    return DATASET_CONFIGS.get(dataset_name, {'reservoir_size': 100, 'use_kfold': False})
-
-
 def set_seed(seed: int = 42):
     """Set random seeds for reproducibility."""
     torch.manual_seed(seed)
@@ -121,7 +96,6 @@ def objective(
     valid_loader,
     test_loader,
     device: torch.device,
-    reservoir_size: int,
 ) -> float:
     """Objective function for Optuna optimization.
     
@@ -132,7 +106,6 @@ def objective(
         valid_loader: Validation data loader
         test_loader: Test data loader
         device: Device to run on
-        reservoir_size: Dataset-specific reservoir size
         
     Returns:
         Validation accuracy to maximize
@@ -145,8 +118,8 @@ def objective(
     else:
         raise ValueError(f"Unknown model: {args.model}")
     
-    # Add reservoir size to config
-    config['reservoir_size'] = reservoir_size
+    # Add reservoir size (total units)
+    config['reservoir_size'] = args.n_units
     
     # Create model
     try:
@@ -193,26 +166,14 @@ def run_hyperparameter_search(args: argparse.Namespace):
     Args:
         args: Command line arguments
     """
-    # Get dataset-specific configuration
-    dataset_config = get_dataset_config(args.dataset)
-    reservoir_size = dataset_config['reservoir_size']
-    use_kfold = dataset_config['use_kfold']
-    
     print("=" * 80)
     print(f"UCR HYPERPARAMETER SEARCH: {args.dataset}")
     print("=" * 80)
     print(f"Model: {args.model.upper()}")
     print(f"Antisymmetric: {args.antisymmetric}")
-    print(f"Reservoir Size: {reservoir_size} units")
-    print(f"Use K-Fold: {use_kfold}")
     print(f"Trials: {args.n_trials}")
     print(f"Device: {args.device}")
     print("=" * 80)
-    
-    if use_kfold:
-        print("\n⚠️  WARNING: This dataset is small and should use k-fold cross-validation.")
-        print("   Use 'ucr_hyperparameter_search_kfold.py' for better results on this dataset.")
-        print("=" * 80)
     
     # Set seed
     set_seed(args.seed)
@@ -256,7 +217,7 @@ def run_hyperparameter_search(args: argparse.Namespace):
     # Run optimization
     print("\nStarting optimization...")
     study.optimize(
-        lambda trial: objective(trial, args, train_loader, valid_loader, test_loader, device, reservoir_size),
+        lambda trial: objective(trial, args, train_loader, valid_loader, test_loader, device),
         n_trials=args.n_trials,
         timeout=args.timeout,
         n_jobs=1,  # Sequential execution for GPU
@@ -337,21 +298,15 @@ def run_hyperparameter_search(args: argparse.Namespace):
     
     # Generate optimization history plot
     try:
-        import matplotlib
-        matplotlib.use('Agg')  # Use non-interactive backend
         import matplotlib.pyplot as plt
         from optuna.visualization.matplotlib import plot_optimization_history, plot_param_importances
         
-        # Plot optimization history
-        ax = plot_optimization_history(study)
-        fig = ax.figure if hasattr(ax, 'figure') else ax.get_figure()
+        fig = plot_optimization_history(study)
         fig.savefig(results_dir / 'optimization_history.png', dpi=150, bbox_inches='tight')
         plt.close(fig)
         
-        # Plot parameter importances
         if len(best_trial.params) > 1:
-            ax = plot_param_importances(study)
-            fig = ax.figure if hasattr(ax, 'figure') else ax.get_figure()
+            fig = plot_param_importances(study)
             fig.savefig(results_dir / 'param_importances.png', dpi=150, bbox_inches='tight')
             plt.close(fig)
         
@@ -393,7 +348,13 @@ def main():
     parser.add_argument(
         '--antisymmetric',
         action='store_true',
-        help='Use antisymmetric coupling (5 layers with 100 units each)'
+        help='Use antisymmetric coupling (5 layers with N units each)'
+    )
+    parser.add_argument(
+        '--n_units',
+        type=int,
+        default=100,
+        help='Total number of reservoir units (default: 100)'
     )
     
     # Search
@@ -414,7 +375,7 @@ def main():
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=512,
+        default=32,
         help='Batch size'
     )
     
