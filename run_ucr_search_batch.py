@@ -3,6 +3,7 @@
 Batch script to run hyperparameter search on multiple UCR datasets.
 Runs searches for FordA, Adiac, and OliveOil datasets with both ESN and RON models.
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ ANTISYMMETRIC = True  # Use antisymmetric coupling
 DEVICE = 'cpu'  # Change to 'cuda' if GPU available
 DATAROOT = './data/UCR'
 RESULTROOT = './ucr_results'
+BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '32'))
 
 def run_search(dataset: str, model: str):
     """Run hyperparameter search for a dataset and model combination."""
@@ -26,8 +28,8 @@ def run_search(dataset: str, model: str):
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Build command - use virtual environment Python
-    python_exec = './thesis_venv/bin/python'
+    # Build command - use current Python interpreter (no venv activation required)
+    python_exec = sys.executable
     cmd = [
         python_exec,
         'ucr_hyperparameter_search.py',
@@ -38,6 +40,7 @@ def run_search(dataset: str, model: str):
         '--device', DEVICE,
         '--dataroot', DATAROOT,
         '--resultroot', RESULTROOT,
+        '--batch_size', str(BATCH_SIZE),
     ]
     
     if ANTISYMMETRIC:
