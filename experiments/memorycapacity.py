@@ -200,6 +200,9 @@ var_train, var_test = [], []
 for t in range(args.trials):
     if args.esn:
         units_per_layer = args.n_hid // args.n_layers
+        # For cycle mode, we should not have self-recurrent connections, only cycle connections
+        # Otherwise each unit has both self-recurrence AND cycle connections, which breaks the simple cycle
+        connectivity_recurrent_value = 0 if args.cycle else units_per_layer
         model = DeepReservoir(
             input_size=n_inp,
             tot_units=args.n_hid,
@@ -209,7 +212,7 @@ for t in range(args.trials):
             inter_scaling=args.inter_scaling,
             input_scaling=args.inp_scaling,
             # Since we are using tot unit and dividing them by the number of layers we need to adjust the connectivity
-            connectivity_recurrent=units_per_layer,
+            connectivity_recurrent=connectivity_recurrent_value,
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,

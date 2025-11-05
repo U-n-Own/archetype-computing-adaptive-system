@@ -4,7 +4,7 @@ Uses Optuna for Bayesian optimization of RON and ESN models.
 
 Usage:
     python ucr_hyperparameter_search.py --dataset FordA --model esn --antisymmetric
-    python ucr_hyperparameter_search.py --dataset Adiac --model ron --topology antisymmetric
+    python ucr_hyperparameter_search.py --dataset Adiac --model ron --antisymmetric
 """
 import argparse
 import os
@@ -53,8 +53,8 @@ def create_esn_search_space(trial: optuna.Trial, antisymmetric: bool) -> Dict[st
     }
     
     if antisymmetric:
-        config['coupling_epsilon'] = trial.suggest_float('coupling_epsilon', 0.001, 1.0, log=True)
-        config['inter_scaling'] = trial.suggest_float('inter_scaling', 0.1, 2.0)
+        config['coupling_epsilon'] = trial.suggest_float('coupling_epsilon', 0.001, 20.0, log=True)
+        # inter_scaling will use default value from model
     
     return config
 
@@ -83,8 +83,8 @@ def create_ron_search_space(trial: optuna.Trial, antisymmetric: bool) -> Dict[st
     }
     
     if antisymmetric:
-        config['coupling_epsilon'] = trial.suggest_float('coupling_epsilon', 0.001, 1.0, log=True)
-        config['inter_scaling'] = trial.suggest_float('inter_scaling', 0.1, 2.0)
+        config['coupling_epsilon'] = trial.suggest_float('coupling_epsilon', 0.001, 20.0, log=True)
+        # inter_scaling will use default value from model
     
     return config
 
@@ -125,7 +125,6 @@ def objective(
             config,
             device,
             antisymmetric=args.antisymmetric,
-            topology=args.topology,
         )
     except Exception as e:
         print(f"⚠ Failed to create model: {e}")
@@ -169,8 +168,6 @@ def run_hyperparameter_search(args: argparse.Namespace):
     print("=" * 80)
     print(f"Model: {args.model.upper()}")
     print(f"Antisymmetric: {args.antisymmetric}")
-    if args.model == 'ron':
-        print(f"Topology: {args.topology}")
     print(f"Trials: {args.n_trials}")
     print(f"Device: {args.device}")
     print("=" * 80)
@@ -197,8 +194,6 @@ def run_hyperparameter_search(args: argparse.Namespace):
     # Create results directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_desc = f"{args.model}_antisym" if args.antisymmetric else args.model
-    if args.model == 'ron' and args.antisymmetric:
-        model_desc += f"_{args.topology}"
     
     results_dir = Path(args.resultroot) / f"{args.dataset}_{model_desc}_{timestamp}"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +248,6 @@ def run_hyperparameter_search(args: argparse.Namespace):
         'dataset': args.dataset,
         'model': args.model,
         'antisymmetric': args.antisymmetric,
-        'topology': args.topology if args.model == 'ron' else None,
         'n_trials': args.n_trials,
         'best_trial': {
             'number': best_trial.number,
@@ -287,7 +281,6 @@ def run_hyperparameter_search(args: argparse.Namespace):
         json.dump({
             'model': args.model,
             'antisymmetric': args.antisymmetric,
-            'topology': args.topology if args.model == 'ron' else None,
             'params': best_trial.params,
             'n_inp': 1,
         }, f, indent=2)
@@ -354,19 +347,12 @@ def main():
         action='store_true',
         help='Use antisymmetric coupling (5 layers with 100 units each)'
     )
-    parser.add_argument(
-        '--topology',
-        type=str,
-        default='full',
-        choices=['full', 'antisymmetric', 'orthogonal'],
-        help='Topology for RON models'
-    )
     
     # Search
     parser.add_argument(
         '--n_trials',
         type=int,
-        default=30,
+        default=15,
         help='Number of optimization trials'
     )
     parser.add_argument(
@@ -380,7 +366,7 @@ def main():
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=32,
+        default=512,
         help='Batch size'
     )
     

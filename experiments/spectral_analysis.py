@@ -27,13 +27,14 @@ def create_reservoir_architectures():
     """Create different reservoir architectures for spectral analysis with adjusted spectral radius."""
     architectures = [
         {"name": "Fully Connected 100", "n_layers": 1, "units_per_layer": 100, "tot_units": 100, "rho": 0.99, "cycle": False},
+        {"name": "Simple Cycle 100 units", "n_layers": 1, "units_per_layer": 100, "tot_units": 100, "rho": 0.9, "cycle": True},
         {"name": "2 Layers 50 units", "n_layers": 2, "units_per_layer": 50, "tot_units": 100, "rho": 0.55, "cycle": True},
         {"name": "4 Layers 25 units", "n_layers": 4, "units_per_layer": 25, "tot_units": 100, "rho": 0.67, "cycle": True},
         {"name": "5 Layers 20 units NO CYCLE", "n_layers": 5, "units_per_layer": 20, "tot_units": 100, "rho": 0.90, "cycle": False},
         {"name": "10 Layers 10 units", "n_layers": 10, "units_per_layer": 10, "tot_units": 100, "rho": 0.685, "cycle": True},
         {"name": "20 Layers 5 units", "n_layers": 20, "units_per_layer": 5, "tot_units": 100, "rho": 0.67, "cycle": True},
         {"name": "50 Layers 2 units", "n_layers": 50, "units_per_layer": 2, "tot_units": 100, "rho": 0.695, "cycle": True},
-        {"name": "100 Layers 1 unit", "n_layers": 100, "units_per_layer": 1, "tot_units": 100, "rho": 0.99, "cycle": True},
+        {"name": "100 Layers 1 unit", "n_layers": 100, "units_per_layer": 1, "tot_units": 100, "rho": 0.9, "cycle": True},
         #{"name": "Fully Connected 50", "n_layers": 1, "units_per_layer": 50, "tot_units": 50, "rho": 0.99},
         #{"name": "2 Layers 25 units", "n_layers": 2, "units_per_layer": 25, "tot_units": 50, "rho": 0.55},
         #{"name": "4 Layers 12 units", "n_layers": 4, "units_per_layer": 12, "tot_units": 50, "rho": 0.57},
@@ -349,6 +350,11 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                 ).to(device)
             else:
                 # ESN parameters (original)
+                # For cycle mode, we should not have self-recurrent connections, only cycle connections
+                connectivity_recurrent_value = 0 if use_cycle else units_per_layer
+                # For cycle mode, use fixed input scaling like SCR (v=0.5)
+                # For non-cycle, use small value to avoid overwhelming reservoir dynamics
+                input_scaling_value = 0.5 if use_cycle else 0.0051
                 model = DeepReservoir(
                     input_size=1,
                     tot_units=arch['tot_units'],  # Use the specified total units
@@ -356,8 +362,8 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                     concat=True,
                     spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
                     inter_scaling=0.0051,  # FIXED: Use same as input_scaling (like memorycapacity.py)
-                    input_scaling=0.0051,
-                    connectivity_recurrent=units_per_layer,  # Use same calculation as memorycapacity.py
+                    input_scaling=input_scaling_value,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
+                    connectivity_recurrent=units_per_layer,  # FIX: 0 for cycle, units_per_layer otherwise
                     connectivity_input=units_per_layer,
                     connectivity_inter=1,  # FIXED: Use same as memorycapacity.py
                     leaky=1.0,
