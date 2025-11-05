@@ -26,10 +26,10 @@ from ucr_experiments.training import train_and_evaluate
 
 # Dataset-specific configurations
 DATASET_CONFIGS = {
-    # Large datasets: 500 units
-    'FordA': {'reservoir_size': 500, 'use_kfold': False},
-    'FordB': {'reservoir_size': 500, 'use_kfold': False},
-    'Adiac': {'reservoir_size': 500, 'use_kfold': False},
+    # Large datasets: 300 units
+    'FordA': {'reservoir_size': 300, 'use_kfold': False},
+    'FordB': {'reservoir_size': 300, 'use_kfold': False},
+    'Adiac': {'reservoir_size': 300, 'use_kfold': False},
     
     # Small datasets: 150 units, use k-fold
     'OliveOil': {'reservoir_size': 150, 'use_kfold': True},

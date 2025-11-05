@@ -9,7 +9,7 @@
 # Hyperparameter Search for Multiple UCR Datasets
 # Runs experiments for: FordA, FordB, Adiac, OliveOil, CinCECGTorso
 # Tests: ESN, Antisymmetric ESN, RON, Antisymmetric RON
-# Large datasets: 500 units, Small datasets: K-fold CV with 150 units
+# Large datasets: 300 units, Small datasets: K-fold CV with 150 units
 
 # Configuration
 N_TRIALS=30
@@ -39,7 +39,7 @@ SUCCESSFUL_EXPERIMENTS=()
 echo "======================================================================"
 echo "UCR Hyperparameter Search - Multiple Datasets"
 echo "======================================================================"
-echo "Large Datasets (500 units): ${LARGE_DATASETS[@]}"
+echo "Large Datasets (300 units): ${LARGE_DATASETS[@]}"
 echo "Small Datasets (150 units, K-Fold): ${SMALL_DATASETS[@]}"
 echo "Models: ESN, ESN-Antisym, RON, RON-Antisym"
 echo "Trials per experiment: ${N_TRIALS}"
