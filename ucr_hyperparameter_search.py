@@ -295,15 +295,21 @@ def run_hyperparameter_search(args: argparse.Namespace):
     
     # Generate optimization history plot
     try:
+        import matplotlib
+        matplotlib.use('Agg')  # Use non-interactive backend
         import matplotlib.pyplot as plt
         from optuna.visualization.matplotlib import plot_optimization_history, plot_param_importances
         
-        fig = plot_optimization_history(study)
+        # Plot optimization history
+        ax = plot_optimization_history(study)
+        fig = ax.figure if hasattr(ax, 'figure') else ax.get_figure()
         fig.savefig(results_dir / 'optimization_history.png', dpi=150, bbox_inches='tight')
         plt.close(fig)
         
+        # Plot parameter importances
         if len(best_trial.params) > 1:
-            fig = plot_param_importances(study)
+            ax = plot_param_importances(study)
+            fig = ax.figure if hasattr(ax, 'figure') else ax.get_figure()
             fig.savefig(results_dir / 'param_importances.png', dpi=150, bbox_inches='tight')
             plt.close(fig)
         
