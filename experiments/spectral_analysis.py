@@ -361,7 +361,7 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                     n_layers=arch['n_layers'],
                     concat=True,
                     spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
-                    inter_scaling=0.0051,  # FIXED: Use same as input_scaling (like memorycapacity.py)
+                    inter_scaling=0.5,  # FIXED: Use same as input_scaling (like memorycapacity.py)
                     input_scaling=input_scaling_value,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
                     connectivity_recurrent=units_per_layer,  # FIX: 0 for cycle, units_per_layer otherwise
                     connectivity_input=units_per_layer,

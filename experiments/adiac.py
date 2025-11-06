@@ -153,6 +153,9 @@ else:
 train_accs, valid_accs, test_accs = [], [], []
 
 for i in range(args.trials):
+    # Set seed for reproducible model initialization
+    set_seed(42 + i)
+    
     if args.esn:
         model = DeepReservoir(
             n_inp,
@@ -280,3 +283,11 @@ ar += (
 )
 f.write(ar + "\n")
 f.close()
+# Print results to console
+print("\n" + "="*80)
+print("RESULTS")
+print("="*80)
+print(f"Train Accuracy: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
+print(f"Valid Accuracy: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
+print(f"Test Accuracy:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
+print("="*80)
