@@ -34,6 +34,7 @@ PARAM_GRID = {
 # Fixed parameters
 FIXED_PARAMS = {
     'n_hid': 100,
+    'batch': 30,  # Batch size for dataloaders
     'trials': 1,  # Use 1 trial for validation-based selection (no --use_test)
     'cpu': True,
 }
