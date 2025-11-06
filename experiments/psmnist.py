@@ -60,6 +60,7 @@ parser.add_argument(
 parser.add_argument("--sparsity", type=float, default=0.0, help="Reservoir sparsity [0, 1)")
 parser.add_argument("--reservoir_scaler", type=float, default=1.0, help="Reservoir scaler")
 parser.add_argument("--seed", type=int, default=42, help="Random seed for permutation")
+parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling strength for antisymmetric inter-layer connections")
 
 args = parser.parse_args()
 
@@ -132,7 +133,7 @@ for trial in range(args.trials):
             cycle=False,
             linear=False,
             antisymmetric=args.antisymmetric,
-            epsilon=0.4 if args.antisymmetric else 0.0,
+            epsilon=args.coupling_epsilon,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
@@ -148,6 +149,8 @@ for trial in range(args.trials):
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
             device=device,
+            antisymmetric_coupling=args.antisymmetric,
+            coupling_epsilon=args.coupling_epsilon,
         ).to(device)
     elif args.pron:
         model = PhysicallyImplementableRandomizedOscillatorsNetwork(
@@ -181,6 +184,8 @@ for trial in range(args.trials):
             args.rho,
             args.inp_scaling,
             device=device,
+            antisymmetric_coupling=args.antisymmetric,
+            coupling_epsilon=args.coupling_epsilon,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
