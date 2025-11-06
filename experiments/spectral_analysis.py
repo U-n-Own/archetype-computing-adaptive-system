@@ -365,7 +365,7 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                     input_scaling=input_scaling_value,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
                     connectivity_recurrent=units_per_layer,  # FIX: 0 for cycle, units_per_layer otherwise
                     connectivity_input=units_per_layer,
-                    connectivity_inter=1,  # FIXED: Use same as memorycapacity.py
+                    connectivity_inter=1,  # FIXED: Use same as memorycapacity.y
                     leaky=1.0,
                     linear=True,
                     cycle=use_cycle,  # Use architecture-specific cycle setting
