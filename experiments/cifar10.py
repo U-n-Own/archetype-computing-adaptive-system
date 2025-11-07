@@ -84,6 +84,9 @@ def test(data_loader, classifier, scaler):
         # Flatten RGB images: (batch, 3, 32, 32) -> (batch, 3072, 1)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
         output = model(images)[-1][0]
+        # Handle case where output might be a list
+        if isinstance(output, list):
+            output = output[0]
         activations.append(output.cpu())
         ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
@@ -207,6 +210,9 @@ for trial in range(args.trials):
         # Flatten RGB images: (batch, 3, 32, 32) -> (batch, 3072, 1)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
         output = model(images)[-1][0]
+        # Handle case where output might be a list
+        if isinstance(output, list):
+            output = output[0]
         activations.append(output.cpu())
         ys.append(labels)
     
