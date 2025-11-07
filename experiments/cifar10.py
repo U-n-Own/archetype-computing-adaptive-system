@@ -188,7 +188,6 @@ for trial in range(args.trials):
             cycle=args.cycle,
             connectivity_input=args.n_hid // args.n_layers,
             connectivity_inter=args.n_hid // args.n_layers,
-            connectivity_recurrent=args.n_hid // args.n_layers,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")

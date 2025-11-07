@@ -152,7 +152,6 @@ for trial in range(args.trials):
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
-            connectivity_recurrent=args.n_hid,
         ).to(device)
     elif args.pron:
         model = PhysicallyImplementableRandomizedOscillatorsNetwork(
@@ -191,7 +190,6 @@ for trial in range(args.trials):
             cycle=args.cycle,
             connectivity_input=args.n_hid // args.n_layers,
             connectivity_inter=args.n_hid // args.n_layers,
-            connectivity_recurrent=args.n_hid // args.n_layers,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
