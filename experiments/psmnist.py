@@ -50,6 +50,7 @@ parser.add_argument("--leaky", type=float, default=1.0, help="Leaky parameter")
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation")
 parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers")
+parser.add_argument("--cycle", action="store_true", help="Use cycle topology for deep reservoirs")
 parser.add_argument(
     "--topology",
     type=str,
@@ -130,7 +131,7 @@ for trial in range(args.trials):
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
-            cycle=False,
+            cycle=args.cycle,
             linear=False,
             antisymmetric=args.antisymmetric,
             epsilon=args.coupling_epsilon,
@@ -151,6 +152,7 @@ for trial in range(args.trials):
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
+            connectivity_recurrent=args.n_hid,
         ).to(device)
     elif args.pron:
         model = PhysicallyImplementableRandomizedOscillatorsNetwork(
@@ -186,6 +188,10 @@ for trial in range(args.trials):
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
+            cycle=args.cycle,
+            connectivity_input=args.n_hid // args.n_layers,
+            connectivity_inter=args.n_hid // args.n_layers,
+            connectivity_recurrent=args.n_hid // args.n_layers,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
