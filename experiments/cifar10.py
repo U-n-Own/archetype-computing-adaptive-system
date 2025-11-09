@@ -15,6 +15,7 @@ import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from acds.archetypes import (
     DeepReservoir,
@@ -50,6 +51,7 @@ parser.add_argument("--leaky", type=float, default=1.0, help="Leaky parameter")
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation")
 parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers")
+parser.add_argument("--concat", action="store_true", help="Concatenate layer outputs for readout")
 parser.add_argument("--cycle", action="store_true", help="Use cycle topology for deep reservoirs")
 parser.add_argument(
     "--topology",
@@ -134,6 +136,7 @@ for trial in range(args.trials):
             leaky=args.leaky,
             cycle=False,
             linear=False,
+            concat=args.concat,
             antisymmetric=args.antisymmetric,
             epsilon=args.coupling_epsilon,
         ).to(device)
@@ -195,6 +198,41 @@ for trial in range(args.trials):
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
+
+    # Visualize spectral properties for deep ESN models
+    if args.esn and args.n_layers > 1:
+        print("\n" + "="*60)
+        print("Computing Spectral Properties of Total Weight Matrix")
+        print("="*60)
+        
+        topology_name = "Cycle" if args.cycle else ("Antisymmetric" if args.antisymmetric else "Feedforward")
+        model_desc = f"DeepESN ({args.n_layers} layers, {topology_name})"
+        
+        # Create directory for spectral analysis results
+        spectral_dir = os.path.join(args.resultroot, "spectral_analysis")
+        os.makedirs(spectral_dir, exist_ok=True)
+        
+        save_path = os.path.join(spectral_dir, f"CIFAR10_spectral_{args.n_layers}layers_{topology_name.lower()}_trial{trial+1}.png")
+        
+        spectral_radius, eigenvals = visualize_spectral_properties(model, device, save_path, model_desc)
+        
+        print(f"\n  Spectral Radius of W_tot: {spectral_radius:.6f}")
+        print(f"  Target ρ (per layer): {args.rho:.6f}")
+        print(f"  Number of layers: {args.n_layers}")
+        print(f"  Topology: {topology_name}")
+        print(f"  Units per layer: {args.n_hid // args.n_layers}")
+        print(f"\n  ℹ️  Note: Each individual layer has ρ ≈ {args.rho:.6f}")
+        print(f"      However, W_tot includes ALL connections (recurrent + {topology_name.lower()}).")
+        print(f"      The spectral radius of W_tot can be LARGER than individual layers")
+        print(f"      due to coupling between layers through {topology_name.lower()} connections.")
+        
+        if spectral_radius > 1.0:
+            print(f"\n  ⚠️  WARNING: Spectral radius of W_tot > 1 (ρ = {spectral_radius:.6f})")
+            print(f"      This indicates potential instability in the full dynamical system!")
+            print(f"      Even though each layer satisfies ρ < 1, the coupled system may not.")
+        else:
+            print(f"\n  ✓ Spectral radius of W_tot < 1 (ρ = {spectral_radius:.6f}) - Stable")
+        print("="*60 + "\n")
 
     # Load CIFAR-10 data
     print("Loading CIFAR-10 dataset...")
