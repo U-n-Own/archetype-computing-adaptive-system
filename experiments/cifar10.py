@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-CIFAR-10 Sequential Classification Experiment
+CIFAR-10 Sequential Classification Experiment (npCIFAR-10)
 
-This script tests various reservoir computing models on the CIFAR-10 dataset
-treated as a sequential classification task (flattened RGB pixels).
+This script implements the npCIFAR-10 benchmark as described in the paper:
+- Each RGB image (32×32×3) is presented in a row-wise fashion
+- RGB channels are flattened into a single vector
+- This creates sequences of 32 elements (one row at a time, each row has 32 pixels × 3 channels)
+- A randomly generated suffix is added to reach a total sequence length of 1,000 time steps
+
+Total sequence structure:
+- Original image data: 32 rows × (32 pixels × 3 RGB) = 32 time steps × 96 features
+- Random suffix: remaining time steps to reach 1,000
+- Input dimension: 96 (32 pixels × 3 RGB channels per time step)
 """
 
 import argparse
@@ -77,15 +85,57 @@ assert os.path.exists(args.resultroot), \
 assert 1.0 > args.sparsity >= 0.0, "Sparsity must be in [0, 1)"
 
 
+def transform_to_npcifar10(images, seq_length=1000, device='cpu'):
+    """
+    Transform CIFAR-10 images to npCIFAR-10 sequential format.
+    
+    Args:
+        images: torch.Tensor of shape (batch, 3, 32, 32) - RGB images
+        seq_length: int - total sequence length (default 1000)
+        device: torch device
+    
+    Returns:
+        torch.Tensor of shape (batch, seq_length, 96) where:
+        - First 32 time steps contain the image data (row-wise, RGB flattened)
+        - Remaining time steps contain random noise
+    """
+    batch_size = images.shape[0]
+    image_rows = 32
+    row_size = 96  # 32 pixels × 3 RGB channels
+    
+    # Initialize output sequence
+    sequences = torch.zeros((batch_size, seq_length, row_size), device=device)
+    
+    # Reshape images from (batch, 3, 32, 32) to (batch, 32, 32, 3)
+    # This presents the image row by row with RGB channels
+    images_hwc = images.permute(0, 2, 3, 1)  # (batch, height=32, width=32, channels=3)
+    
+    # Flatten each row: (batch, 32, 32*3) = (batch, 32, 96)
+    image_data = images_hwc.reshape(batch_size, image_rows, row_size)
+    
+    # Place image data in first 32 time steps
+    sequences[:, :image_rows, :] = image_data
+    
+    # Fill remaining time steps with random noise
+    # Using uniform distribution [-1, 1] for consistency with normalized input
+    random_suffix_length = seq_length - image_rows
+    sequences[:, image_rows:, :] = torch.rand(
+        (batch_size, random_suffix_length, row_size), 
+        device=device
+    ) * 2 - 1  # Scale to [-1, 1]
+    
+    return sequences
+
+
 @torch.no_grad()
-def test(data_loader, classifier, scaler):
-    """Evaluate model performance on a dataset."""
+def test(data_loader, classifier, scaler, seq_length=1000):
+    """Evaluate model performance on a dataset using npCIFAR-10 format."""
     activations, ys = [], []
     for images, labels in tqdm(data_loader, desc="Testing"):
         images = images.to(device)
-        # Flatten RGB images: (batch, 3, 32, 32) -> (batch, 3072, 1)
-        images = images.view(images.shape[0], -1).unsqueeze(-1)
-        output = model(images)[-1][0]
+        # Transform to npCIFAR-10 format: (batch, seq_length, 96)
+        sequences = transform_to_npcifar10(images, seq_length, device)
+        output = model(sequences)[-1][0]
         # Handle case where output might be a list
         if isinstance(output, list):
             output = output[0]
@@ -105,8 +155,20 @@ device = (
 print("Using device:", device)
 print(f"Running {args.trials} trial(s)")
 
-n_inp = 1  # Sequential input (one pixel at a time)
+# npCIFAR-10 configuration
+n_inp = 96  # 32 pixels × 3 RGB channels per row
 n_out = 10  # 10 classes
+seq_length = 1000  # Total sequence length
+image_rows = 32  # Number of rows in image (each becomes a time step)
+row_size = 96  # 32 pixels × 3 RGB channels
+random_suffix_length = seq_length - image_rows  # 968 random time steps
+
+print("\nnpCIFAR-10 Configuration:")
+print(f"  Input dimension per time step: {n_inp} (32 pixels × 3 RGB)")
+print(f"  Image data: {image_rows} time steps")
+print(f"  Random suffix: {random_suffix_length} time steps")
+print(f"  Total sequence length: {seq_length} time steps")
+print()
 
 gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
 epsilon = (
@@ -199,41 +261,6 @@ for trial in range(args.trials):
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
 
-    # Visualize spectral properties for deep ESN models
-    if args.esn and args.n_layers > 1:
-        print("\n" + "="*60)
-        print("Computing Spectral Properties of Total Weight Matrix")
-        print("="*60)
-        
-        topology_name = "Cycle" if args.cycle else ("Antisymmetric" if args.antisymmetric else "Feedforward")
-        model_desc = f"DeepESN ({args.n_layers} layers, {topology_name})"
-        
-        # Create directory for spectral analysis results
-        spectral_dir = os.path.join(args.resultroot, "spectral_analysis")
-        os.makedirs(spectral_dir, exist_ok=True)
-        
-        save_path = os.path.join(spectral_dir, f"CIFAR10_spectral_{args.n_layers}layers_{topology_name.lower()}_trial{trial+1}.png")
-        
-        spectral_radius, eigenvals = visualize_spectral_properties(model, device, save_path, model_desc)
-        
-        print(f"\n  Spectral Radius of W_tot: {spectral_radius:.6f}")
-        print(f"  Target ρ (per layer): {args.rho:.6f}")
-        print(f"  Number of layers: {args.n_layers}")
-        print(f"  Topology: {topology_name}")
-        print(f"  Units per layer: {args.n_hid // args.n_layers}")
-        print(f"\n  ℹ️  Note: Each individual layer has ρ ≈ {args.rho:.6f}")
-        print(f"      However, W_tot includes ALL connections (recurrent + {topology_name.lower()}).")
-        print(f"      The spectral radius of W_tot can be LARGER than individual layers")
-        print(f"      due to coupling between layers through {topology_name.lower()} connections.")
-        
-        if spectral_radius > 1.0:
-            print(f"\n  ⚠️  WARNING: Spectral radius of W_tot > 1 (ρ = {spectral_radius:.6f})")
-            print(f"      This indicates potential instability in the full dynamical system!")
-            print(f"      Even though each layer satisfies ρ < 1, the coupled system may not.")
-        else:
-            print(f"\n  ✓ Spectral radius of W_tot < 1 (ρ = {spectral_radius:.6f}) - Stable")
-        print("="*60 + "\n")
-
     # Load CIFAR-10 data
     print("Loading CIFAR-10 dataset...")
     train_loader, valid_loader, test_loader = get_cifar10_data(
@@ -245,9 +272,9 @@ for trial in range(args.trials):
     activations, ys = [], []
     for images, labels in tqdm(train_loader, desc="Training"):
         images = images.to(device)
-        # Flatten RGB images: (batch, 3, 32, 32) -> (batch, 3072, 1)
-        images = images.view(images.shape[0], -1).unsqueeze(-1)
-        output = model(images)[-1][0]
+        # Transform to npCIFAR-10 format: (batch, seq_length, 96)
+        sequences = transform_to_npcifar10(images, seq_length, device)
+        output = model(sequences)[-1][0]
         # Handle case where output might be a list
         if isinstance(output, list):
             output = output[0]
@@ -264,9 +291,9 @@ for trial in range(args.trials):
     
     # Evaluate
     print("Evaluating...")
-    train_acc = test(train_loader, classifier, scaler)
-    valid_acc = test(valid_loader, classifier, scaler) if not args.use_test else 0.0
-    test_acc = test(test_loader, classifier, scaler) if args.use_test else 0.0
+    train_acc = test(train_loader, classifier, scaler, seq_length)
+    valid_acc = test(valid_loader, classifier, scaler, seq_length) if not args.use_test else 0.0
+    test_acc = test(test_loader, classifier, scaler, seq_length) if args.use_test else 0.0
     
     train_accs.append(train_acc)
     valid_accs.append(valid_acc)
