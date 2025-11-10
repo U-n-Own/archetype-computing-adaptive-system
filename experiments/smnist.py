@@ -108,10 +108,8 @@ def test(data_loader, classifier, scaler):
         images = images.to(device)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
         output = model(images)[-1][0]
-        if isinstance(output, list):
-            output = output[0]
-    activations.append(output.cpu())
-    ys.append(labels)
+        activations.append(output.cpu())
+        ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
     activations = scaler.transform(activations)
     ys = torch.cat(ys, dim=0).numpy()
