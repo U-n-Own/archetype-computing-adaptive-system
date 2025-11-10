@@ -64,6 +64,7 @@ parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radiu
 parser.add_argument("--cycle", action="store_true", help="Use cycle reservoir")
 parser.add_argument("--antisymmetric", action="store_true", help="Use antisymmetric coupling in the reservoir")
 parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling epsilon for antisymmetric reservoirs")
+parser.add_argument("--concat", action="store_true", help="Concatenate layer states for output")
 parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
