@@ -146,6 +146,7 @@ for i in range(args.trials):
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
             cycle=args.cycle,
+            concat=args.concat,
             linear=False,
             epsilon=args.coupling_epsilon,
             antisymmetric=args.antisymmetric,
