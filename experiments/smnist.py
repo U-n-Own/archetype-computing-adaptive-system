@@ -203,7 +203,7 @@ for i in range(args.trials):
             connectivity_inter=args.n_hid // args.n_layers, 
             device=device,
             antisymmetric_coupling=args.antisymmetric,
-            epsilon_coupling=args.coupling_epsilon,
+            coupling_epsilon=args.coupling_epsilon,
             concat=args.concat,
             cycle=args.cycle
         ).to(device)
