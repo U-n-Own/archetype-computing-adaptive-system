@@ -47,22 +47,27 @@ def create_reservoir_architectures():
 
 
 def construct_jacobian(model, device):
-    """Construct block matrix form of the Jacobian of 
-    The cycle network like follows:
-    [ W_rec_0  W_proj_0  0         ... ]
-    [ 0        W_rec_1  W_proj_1  ... ]
-    [ 0        0        W_rec_2   ... ]
+    """Construct block matrix form of the Jacobian of the cycle network.
+    
+    The Jacobian structure matches the actual implementation where each layer i
+    receives input from layer i-1 (with layer 0 receiving from layer n-1):
+    
+    [ W_rec_0     0         0       ...  W_proj_0   ]  ← ∂h_0/∂h (depends on h_{n-1})
+    [ W_proj_1    W_rec_1   0       ...  0          ]  ← ∂h_1/∂h (depends on h_0)
+    [ 0           W_proj_2  W_rec_2 ...  0          ]  ← ∂h_2/∂h (depends on h_1)
     ...
-    [ W_proj_n-1  0       0       W_rec_n-1 ]
+    [ 0           0         0       ...  W_rec_{n-1}]  ← ∂h_{n-1}/∂h (depends on h_{n-2})
     
-    where W_rec_i are the recurrent weight matrices of each layer and
-    W_proj_i are the projection weights connecting layers in a cyclic manner.
+    where:
+    - W_rec_i: recurrent weight matrices of each layer (diagonal blocks)
+    - W_proj_i: projection weights from layer i-1 to layer i (sub-diagonal)
+    - W_proj_0: projection from layer n-1 to layer 0 (top-right, closing the ring)
     
-    This is a simplified version that assumes all layers have recurrent connections
-    and possibly projection connections in a cyclic topology.
+    This matches the implementation where:
+        h_i^(t) = f(W_in * x + W_rec_i * h_i^(t-1) + W_proj_i * h_{i-1}^(t-1))
     
-    Returns a block diagonal matrix representing the Jacobian of the reservoir dynamics
-    with respect to the reservoir states, which is useful for analyzing stability and dynamics.
+    Returns a block matrix representing the Jacobian ∂h/∂h of the reservoir dynamics,
+    which is useful for analyzing stability and dynamics via spectral properties.
     """
     jacobian_blocks = []
     
@@ -111,10 +116,13 @@ def construct_jacobian(model, device):
     
     # Add inter-layer connections for cyclic topology
     if model.cycle and model.n_layers > 1:
-        # Connect last layer back to first layer
+        # Connect layers in a ring: layer i receives input from layer i-1
+        # Layer 0 receives from layer n-1 (closing the ring)
         for layer_idx in range(model.n_layers):
-            next_layer_idx = (layer_idx + 1) % model.n_layers
+            # Determine which layer's output feeds into current layer
+            prev_layer_idx = (layer_idx - 1) % model.n_layers
             
+            # Get the projection kernel from the current layer
             layer = reservoir_layers[layer_idx]
             
             # For ESN - Get projection kernel weights for cycle connections
@@ -122,37 +130,43 @@ def construct_jacobian(model, device):
                 W_proj = layer.net.projection_kernel.detach().cpu().numpy()
                 
                 # Calculate positions in the full matrix
+                # Current layer (row) depends on previous layer (column)
                 curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
                 curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
-                next_start = sum(jacobian_blocks[j].shape[0] for j in range(next_layer_idx))
-                next_end = next_start + jacobian_blocks[next_layer_idx].shape[0]
+                prev_start = sum(jacobian_blocks[j].shape[0] for j in range(prev_layer_idx))
+                prev_end = prev_start + jacobian_blocks[prev_layer_idx].shape[0]
                 
-                # Add cycle connection
-                if W_proj.shape[0] == (curr_end - curr_start) and W_proj.shape[1] == (next_end - next_start):
-                    total_jacobian[next_start:next_end, curr_start:curr_end] = W_proj.T
+                # Add cycle connection WITHOUT transpose
+                # In implementation: h_i^(t) depends on h_{i-1}^(t-1) via W_proj
+                # Jacobian: ∂h_i/∂h_{i-1} = W_proj 
+                if W_proj.shape[0] == (curr_end - curr_start) and W_proj.shape[1] == (prev_end - prev_start):
+                    total_jacobian[curr_start:curr_end, prev_start:prev_end] = W_proj
             # For RON - Get cycle kernel weights
             elif hasattr(layer, 'cycle_kernel') and layer.cycle_kernel is not None:
                 W_cycle = layer.cycle_kernel.detach().cpu().numpy()
                 
                 # Calculate positions in the full matrix
+                # Current layer (row) depends on previous layer (column)
                 curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
                 curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
-                next_start = sum(jacobian_blocks[j].shape[0] for j in range(next_layer_idx))
-                next_end = next_start + jacobian_blocks[next_layer_idx].shape[0]
+                prev_start = sum(jacobian_blocks[j].shape[0] for j in range(prev_layer_idx))
+                prev_end = prev_start + jacobian_blocks[prev_layer_idx].shape[0]
                 
                 # Add cycle connection
-                if W_cycle.shape[0] == (curr_end - curr_start) and W_cycle.shape[1] == (next_end - next_start):
-                    total_jacobian[next_start:next_end, curr_start:curr_end] = W_cycle.T
+                # In implementation: h_i^(t) depends on h_{i-1}^(t-1) via W_cycle
+                # Jacobian: ∂h_i/∂h_{i-1} = W_cycle 
+                if W_cycle.shape[0] == (curr_end - curr_start) and W_cycle.shape[1] == (prev_end - prev_start):
+                    total_jacobian[curr_start:curr_end, prev_start:prev_end] = W_cycle
             elif model.cycle and hasattr(model, 'no_projection') and model.no_projection:
                 # For pure cycle without projection matrices, create identity connections
                 curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
                 curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
-                next_start = sum(jacobian_blocks[j].shape[0] for j in range(next_layer_idx))
-                next_end = next_start + jacobian_blocks[next_layer_idx].shape[0]
+                prev_start = sum(jacobian_blocks[j].shape[0] for j in range(prev_layer_idx))
+                prev_end = prev_start + jacobian_blocks[prev_layer_idx].shape[0]
                 
                 # Add identity connection (or truncated identity if dimensions differ)
-                min_dim = min(curr_end - curr_start, next_end - next_start)
-                total_jacobian[next_start:next_start+min_dim, curr_start:curr_start+min_dim] = np.eye(min_dim)
+                min_dim = min(curr_end - curr_start, prev_end - prev_start)
+                total_jacobian[curr_start:curr_start+min_dim, prev_start:prev_start+min_dim] = np.eye(min_dim)
     
     return total_jacobian
 
@@ -362,11 +376,11 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                     concat=True,
                     spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
                     inter_scaling=0.5,  # FIXED: Use same as input_scaling (like memorycapacity.py)
-                    input_scaling=input_scaling_value,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
+                    input_scaling=0.5,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
                     connectivity_recurrent=units_per_layer,  # FIX: 0 for cycle, units_per_layer otherwise
                     connectivity_input=units_per_layer,
-                    connectivity_inter=1,  # FIXED: Use same as memorycapacity.y
-                    leaky=1.0,
+                    connectivity_inter=units_per_layer,  # FIXED: Use same as memorycapacity.y
+                    leaky=0.01,
                     linear=True,
                     cycle=use_cycle,  # Use architecture-specific cycle setting
                 ).to(device)
