@@ -154,14 +154,14 @@ for i in range(args.trials):
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.diffusive_gamma,
-            args.rho,
-            args.inp_scaling,
+            n_inp=n_inp,
+            n_hid=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            diffusive_gamma=args.diffusive_gamma,
+            rho=args.rho,
+            inp_scaling=args.inp_scaling,
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
@@ -191,7 +191,7 @@ for i in range(args.trials):
     elif args.deepron:
         model = DeepRandomizedOscillatorsNetwork(
             n_inp=n_inp,
-            tot_units=args.n_hid,
+            total_units=args.n_hid,
             dt=args.dt,
             gamma=gamma,
             epsilon=epsilon,
