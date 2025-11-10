@@ -62,6 +62,9 @@ parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="diffusiv
 parser.add_argument("--inp_scaling", type=float, default=1.0, help="ESN input scaling")
 parser.add_argument("--rho", type=float, default=0.99, help="ESN spectral radius")
 parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radius")
+parser.add_argument("--cycle", action="store_true", help="Use cycle reservoir")
+parser.add_argument("--antisymmetric", action="store_true", help="Use antisymmetric coupling in the reservoir")
+parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling epsilon for antisymmetric reservoirs")
 parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
@@ -143,9 +146,10 @@ for i in range(args.trials):
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
-            cycle=False,
+            cycle=args.cycle,
             linear=False,
-            antisymmetric=True,
+            epsilon=args.coupling_epsilon,
+            antisymmetric=args.antisymmetric,
             epsilon=0.4,
         ).to(device)
     elif args.ron:
@@ -186,16 +190,23 @@ for i in range(args.trials):
     # add Deep RON here
     elif args.deepron:
         model = DeepRandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.n_hid_layers,
-            args.dt,
-            gamma,
-            epsilon,
-            args.diffusive_gamma,
-            args.rho,
-            args.inp_scaling,
-            device=device
+            n_inp=n_inp,
+            tot_units=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            inp_scaling=args.inp_scaling,
+            n_layers=args.n_layers,
+            rho=args.rho,
+            input_scaling=args.inp_scaling,
+            inter_scaling=args.inp_scaling,
+            connectivity_input=args.n_hid // args.n_layers,
+            connectivity_inter=args.n_hid // args.n_layers, 
+            device=device,
+            antisymmetric=args.antisymmetric,
+            epsilon_coupling=args.coupling_epsilon,
+            concat=args.concat,
+            cycle=args.cycle
         ).to(device)
     else:
         raise ValueError("Wrong model choice.")
