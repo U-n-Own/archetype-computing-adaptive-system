@@ -195,7 +195,6 @@ for i in range(args.trials):
             dt=args.dt,
             gamma=gamma,
             epsilon=epsilon,
-            inp_scaling=args.inp_scaling,
             n_layers=args.n_layers,
             rho=args.rho,
             input_scaling=args.inp_scaling,
