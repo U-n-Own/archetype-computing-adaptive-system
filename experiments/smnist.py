@@ -150,7 +150,6 @@ for i in range(args.trials):
             linear=False,
             epsilon=args.coupling_epsilon,
             antisymmetric=args.antisymmetric,
-            epsilon=0.4,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
