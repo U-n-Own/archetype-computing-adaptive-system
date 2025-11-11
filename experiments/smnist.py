@@ -52,6 +52,7 @@ parser.add_argument(
     default=4.7,
     help="z controle parameter <epsilon> of the coRNN",
 )
+parser.add_argument("--seed", type=int, default=42, help="random seed")
 parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--esn", action="store_true")
 parser.add_argument("--ron", action="store_true")
