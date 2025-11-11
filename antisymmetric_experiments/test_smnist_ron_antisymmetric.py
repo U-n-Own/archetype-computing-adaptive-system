@@ -63,11 +63,11 @@ GAMMA_RANGE = 1.0
 # Different RHO values to test for 5-layer antisymmetric
 RHO_VALUES = [0.7, 0.8, 0.999]
 
-# Derived parameters
-EPSILON_MIN = EPSILON_CENTER - EPSILON_RANGE
-EPSILON_MAX = EPSILON_CENTER + EPSILON_RANGE
-GAMMA_MIN = GAMMA_CENTER - GAMMA_RANGE  
-GAMMA_MAX = GAMMA_CENTER + GAMMA_RANGE
+# Derived parameters (divide range by 2 to match smnist.py behavior)
+EPSILON_MIN = EPSILON_CENTER - EPSILON_RANGE / 2.0
+EPSILON_MAX = EPSILON_CENTER + EPSILON_RANGE / 2.0
+GAMMA_MIN = GAMMA_CENTER - GAMMA_RANGE / 2.0
+GAMMA_MAX = GAMMA_CENTER + GAMMA_RANGE / 2.0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}\n")
