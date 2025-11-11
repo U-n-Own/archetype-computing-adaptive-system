@@ -107,7 +107,9 @@ def test(data_loader, classifier, scaler):
     for images, labels in tqdm(data_loader):
         images = images.to(device)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
-        output = model(images)[-1][0]
+        states, states_last = model(images)
+        # Use the last timestep from states (already respects concat flag)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
@@ -218,7 +220,9 @@ for i in range(args.trials):
     for images, labels in tqdm(train_loader):
         images = images.to(device)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
-        output = model(images)[-1][0]
+        states, states_last = model(images)
+        # Use the last timestep from states (already respects concat flag)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
