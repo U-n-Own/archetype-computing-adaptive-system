@@ -66,23 +66,44 @@ def collect_trajectories(model, data_loader, n_samples=5, device='cpu'):
                     new_hz_states = []
                     
                     for i, ron_layer in enumerate(model.ron_reservoir):
-                        # Prepare layer input
-                        if i == 0:
+                        # Prepare layer input based on architecture
+                        if model.cycle:
+                            # In cycle mode, all layers receive original input
                             layer_input = images[:, t, :]
                         else:
-                            layer_input = new_h_states[i-1]
+                            # In feedforward/antisymmetric mode, layers receive from previous layer
+                            if i == 0:
+                                layer_input = images[:, t, :]
+                            else:
+                                layer_input = new_h_states[i-1]
                         
-                        # Prepare antisymmetric coupling inputs
-                        h_prev_layer = h_states[i-1] if i > 0 else None
-                        h_next_layer = h_states[i+1] if i < len(model.ron_reservoir) - 1 else None
+                        # Prepare antisymmetric coupling inputs (from previous timestep)
+                        if model.antisymmetric_coupling:
+                            h_prev_layer = h_states[i-1] if i > 0 else None
+                            h_next_layer = h_states[i+1] if i < len(model.ron_reservoir) - 1 else None
+                        else:
+                            h_prev_layer = None
+                            h_next_layer = None
+                        
+                        # Prepare cycle feedback (ring topology)
+                        if model.cycle:
+                            if i == 0:
+                                # First layer gets feedback from last layer (closing the ring)
+                                h_last = h_states[-1] if len(model.ron_reservoir) > 1 else torch.zeros(batch_size, ron_layer.n_hid, device=device)
+                            else:
+                                h_last = h_states[i-1]
+                            first_layer_flag = True  # All layers can receive cycle input
+                        else:
+                            h_last = None
+                            first_layer_flag = (i == 0)
                         
                         # Forward through the layer
                         new_h, new_hz = ron_layer.cell(
                             layer_input,
                             h_states[i],
                             hz_states[i],
-                            first_layer=(i == 0),
-                            h_last=None,
+                            first_layer=first_layer_flag,
+                            h_last=h_last,
                             h_prev_layer=h_prev_layer,
                             h_next_layer=h_next_layer
                         )
