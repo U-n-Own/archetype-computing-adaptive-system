@@ -163,7 +163,7 @@ for i in range(args.trials):
             epsilon=epsilon,
             diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
-            inp_scaling=args.inp_scaling,
+            input_scaling=args.inp_scaling,
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
