@@ -10,6 +10,8 @@ This version uses modular imports:
 - ron_training.py: Training and evaluation functions
 """
 import os
+import sys
+import argparse
 import numpy as np
 import torch
 
@@ -20,6 +22,19 @@ from acds.benchmarks import get_mnist_data
 from ron_analysis import analyze_weight_matrix
 from ron_training import train_and_evaluate
 from ron_visualization import plot_spectral_radius_comparison
+
+# Add parent directory to path to import from experiments
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from experiments.utils import set_seed
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Test RON architectures on sMNIST")
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+args = parser.parse_args()
+
+# Set the seed for reproducibility
+set_seed(args.seed)
+print(f"Random seed set to: {args.seed}")
 
 # Create results directory
 RESULTS_DIR = "results_smnist_ron_antisymmetric"

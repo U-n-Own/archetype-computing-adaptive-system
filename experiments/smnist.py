@@ -6,6 +6,7 @@ import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
+from experiments.utils import set_seed
 
 from acds.archetypes import (
     DeepReservoir,
@@ -88,6 +89,10 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
+
+# Set random seed for reproducibility
+set_seed(args.seed)
+print(f"Random seed set to: {args.seed}")
 
 if args.dataroot is None:
     warnings.warn("No dataroot provided. Using current location as default.")
