@@ -263,3 +263,13 @@ ar += (
 )
 f.write(ar + "\n")
 f.close()
+
+#write final results on stdout
+
+print(f"\n{'='*60}")
+print("Final Results Summary:")
+print(f"{'='*60}")
+print(f"Train: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
+print(f"Valid: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
+print(f"Test:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
+print(f"{'='*60}")
