@@ -40,6 +40,7 @@ parser.add_argument("--trials", type=int, default=3, help="Number of trials per 
 parser.add_argument("--dataroot", type=str, default="data", help="Data directory")
 parser.add_argument("--resultroot", type=str, default="results_psmnist_all_models", 
                     help="Results directory")
+parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation set")
 args = parser.parse_args()
 
 # Set the seed for reproducibility
@@ -132,7 +133,7 @@ def evaluate_model(model, data_loader, classifier, scaler, device):
     return classifier.score(activations, ys)
 
 
-def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader, device):
+def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader, device, use_test=False):
     """Train readout and evaluate model."""
     print(f"\n  Training {model_name}...")
     
@@ -158,8 +159,8 @@ def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loade
     
     # Evaluate
     train_acc = evaluate_model(model, train_loader, classifier, scaler, device)
-    valid_acc = evaluate_model(model, valid_loader, classifier, scaler, device)
-    test_acc = evaluate_model(model, test_loader, classifier, scaler, device)
+    valid_acc = evaluate_model(model, valid_loader, classifier, scaler, device) if not use_test else 0.0
+    test_acc = evaluate_model(model, test_loader, classifier, scaler, device) if use_test else 0.0
     
     return {
         'name': model_name,
@@ -218,7 +219,7 @@ if __name__ == "__main__":
             
             result = train_and_evaluate(
                 f"ESN 1-layer (trial {trial+1})",
-                model, train_loader, valid_loader, test_loader, device
+                model, train_loader, valid_loader, test_loader, device, args.use_test
             )
             result['trial'] = trial + 1
             result['rho'] = ESN_RHO_BASELINE
@@ -277,7 +278,7 @@ if __name__ == "__main__":
                     
                     result = train_and_evaluate(
                         f"DeepESN 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
-                        model, train_loader, valid_loader, test_loader, device
+                        model, train_loader, valid_loader, test_loader, device, args.use_test
                     )
                     result['trial'] = trial + 1
                     result['rho'] = rho_val
@@ -333,7 +334,7 @@ if __name__ == "__main__":
                 
                 result = train_and_evaluate(
                     f"DeepESN 5-layer Cycle (ρ={rho_val}, trial {trial+1})",
-                    model, train_loader, valid_loader, test_loader, device
+                    model, train_loader, valid_loader, test_loader, device, args.use_test
                 )
                 result['trial'] = trial + 1
                 result['rho'] = rho_val
@@ -391,7 +392,7 @@ if __name__ == "__main__":
             
             result = train_and_evaluate(
                 f"RON 1-layer (trial {trial+1})",
-                model, train_loader, valid_loader, test_loader, device
+                model, train_loader, valid_loader, test_loader, device, args.use_test
             )
             result['trial'] = trial + 1
             result['rho'] = RON_RHO_BASELINE
@@ -450,7 +451,7 @@ if __name__ == "__main__":
                     
                     result = train_and_evaluate(
                         f"DeepRON 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
-                        model, train_loader, valid_loader, test_loader, device
+                        model, train_loader, valid_loader, test_loader, device, args.use_test
                     )
                     result['trial'] = trial + 1
                     result['rho'] = rho_val
@@ -508,7 +509,7 @@ if __name__ == "__main__":
                 
                 result = train_and_evaluate(
                     f"DeepRON 5-layer Cycle (ρ={rho_val}, trial {trial+1})",
-                    model, train_loader, valid_loader, test_loader, device
+                    model, train_loader, valid_loader, test_loader, device, args.use_test
                 )
                 result['trial'] = trial + 1
                 result['rho'] = rho_val

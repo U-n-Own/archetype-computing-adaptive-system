@@ -64,7 +64,7 @@ N_TRIALS = args.trials
 # Hyperparameters - LEAVE BLANK FOR USER TO FILL
 # ESN Hyperparameters
 ESN_RHO_BASELINE = 0.999  # Spectral radius for 1-layer ESN
-ESN_RHO_VALUES = [0.999, 0.8]  # List of rho values to test for 5-layer ESN, e.g., [0.7, 0.8, 0.9]
+ESN_RHO_VALUES = [0.999]  # List of rho values to test for 5-layer ESN, e.g., [0.7, 0.8, 0.9]
 ESN_INPUT_SCALING = 1  # Input scaling for ESN
 ESN_LEAKY = 0.001  # Leaky rate for ESN
 
