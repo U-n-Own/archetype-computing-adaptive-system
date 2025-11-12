@@ -344,8 +344,8 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                 dt = 0.5923
                 gamma = 1.632
                 epsilon = 0.78
-                input_scaling = 0.2
-                inter_scaling = 0.2
+                input_scaling = 0.01
+                inter_scaling = 0.01
                 
                 model = DeepRandomizedOscillatorsNetwork(
                     n_inp=1,
