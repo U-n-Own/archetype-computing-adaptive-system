@@ -364,25 +364,21 @@ def analyze_reservoir_spectral_properties(device=torch.device("cpu"), use_ron=Fa
                 ).to(device)
             else:
                 # ESN parameters (original)
-                # For cycle mode, we should not have self-recurrent connections, only cycle connections
-                connectivity_recurrent_value = 0 if use_cycle else units_per_layer
-                # For cycle mode, use fixed input scaling like SCR (v=0.5)
-                # For non-cycle, use small value to avoid overwhelming reservoir dynamics
-                input_scaling_value = 0.5 if use_cycle else 0.0051
+                # Correct behaviour is shown only if inter scaling is 0.5 and input is 1 between layers, and leaky 1 
                 model = DeepReservoir(
                     input_size=1,
-                    tot_units=arch['tot_units'],  # Use the specified total units
+                    tot_units=arch['tot_units'],  
                     n_layers=arch['n_layers'],
                     concat=True,
-                    spectral_radius=arch['rho'],  # Use architecture-specific spectral radius
-                    inter_scaling=0.5,  # FIXED: Use same as input_scaling (like memorycapacity.py)
-                    input_scaling=0.5,  # FIX: 0.5 for cycle (like SCR), 0.0051 otherwise
-                    connectivity_recurrent=units_per_layer,  # FIX: 0 for cycle, units_per_layer otherwise
+                    spectral_radius=arch['rho'], 
+                    inter_scaling=0.5,
+                    input_scaling=1,  
+                    connectivity_recurrent=units_per_layer, # If 0 cycle, no self-recurrent connections
                     connectivity_input=units_per_layer,
-                    connectivity_inter=units_per_layer,  # FIXED: Use same as memorycapacity.y
-                    leaky=0.01,
+                    connectivity_inter=units_per_layer, 
+                    leaky=1,
                     linear=True,
-                    cycle=use_cycle,  # Use architecture-specific cycle setting
+                    cycle=use_cycle, 
                 ).to(device)
             
 
