@@ -207,7 +207,7 @@ if __name__ == "__main__":
                 connectivity_inter=N_HID,
                 leaky=ESN_LEAKY,
                 cycle=False,
-                concat=False,
+                concat=True,
                 linear=False,
             ).to(device)
             
@@ -441,6 +441,8 @@ if __name__ == "__main__":
                         antisymmetric_coupling=True,
                         coupling_epsilon=coup_eps,
                         device=device,
+                        connectivity_input=N_HID // 5,
+                        connectivity_inter=N_HID // 5,
                     ).to(device)
                     
                     result = train_and_evaluate(
@@ -499,6 +501,8 @@ if __name__ == "__main__":
                     cycle=True,
                     antisymmetric_coupling=False,
                     device=device,
+                    connectivity_input=N_HID // 5,
+                    connectivity_inter=N_HID // 5,
                 ).to(device)
                 
                 result = train_and_evaluate(
