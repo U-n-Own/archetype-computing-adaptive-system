@@ -118,16 +118,6 @@ class RandomizedOscillatorsNetwork(nn.Module):
         # Ensure h2h is on the correct device
         h2h = h2h.to(device)
         self.h2h = nn.Parameter(h2h, requires_grad=False)
-
-        # add the cycle kernel for cyclic feedback if needed
-        if self.cycle:
-            # For cycle functionality, we need to know the size of the last layer
-            # This will be set during initialization of DeepRandomizedOscillatorsNetwork
-            # make a cycle kernel init as Wrec form last layer to first layer
-            pass
-        else:
-            # nothing
-            pass
         
         x2h = torch.rand(n_inp, n_hid, device=device) * input_scaling
         self.x2h = nn.Parameter(x2h, requires_grad=False)
@@ -407,7 +397,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             layer_states_all = [[] for _ in range(len(self.ron_reservoir))]
 
             for t in range(seq_len):
-                current_input = x[:, t, :] if t == 0 else None
+                #current_input = x[:, t, :] if t == 0 else None
                 new_h_states = []
                 new_hz_states = []
                 
@@ -513,5 +503,5 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             x = states[-1]
             
        # Choose if return all_states from all layers for the  
-       
+       # we return states_uncat for the plots of distance between states  
         return x, layer_states#, states_uncat
