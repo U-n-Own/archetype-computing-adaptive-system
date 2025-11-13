@@ -72,14 +72,14 @@ ESN_INPUT_SCALING = 1  # Input scaling for ESN
 ESN_LEAKY = 0.001  # Leaky rate for ESN
 
 # RON Hyperparameters
-RON_DT = 0.042  # Time step for RON
+RON_DT_VALUES = [0.042]  # List of time step values to test (e.g., [0.042, 0.05, 0.1])
 RON_RHO_BASELINE = 9  # Spectral radius for 1-layer RON
 RON_RHO_VALUES = [9]  # List of rho values to test for 5-layer RON
 RON_INPUT_SCALING = 1  # Input scaling for RON
-RON_EPSILON_CENTER = 0.51  # Center value for epsilon range
-RON_EPSILON_RANGE = 0.5  # Range for epsilon
-RON_GAMMA_CENTER = 2.7  # Center value for gamma range
-RON_GAMMA_RANGE = 1  # Range for gamma
+RON_EPSILON_CENTER_VALUES = [0.51]  # List of center values for epsilon range (e.g., [0.3, 0.51, 0.7])
+RON_EPSILON_RANGE_VALUES = [0.5]  # List of range values for epsilon (e.g., [0.3, 0.5, 0.7])
+RON_GAMMA_CENTER_VALUES = [2.7]  # List of center values for gamma range (e.g., [2.0, 2.7, 3.5])
+RON_GAMMA_RANGE_VALUES = [1]  # List of range values for gamma (e.g., [0.5, 1.0, 1.5])
 
 # Coupling strength values to test for antisymmetric architectures
 COUPLING_VALUES = [5, 10, 20]  # e.g., [5.0, 10.0, 20.0, 50.0]
@@ -94,21 +94,22 @@ if args.model_type in ["esn", "both"]:
         raise ValueError("Please set COUPLING_VALUES as a list of coupling strengths to test")
 
 if args.model_type in ["ron", "both"]:
-    if None in [RON_DT, RON_RHO_BASELINE, RON_INPUT_SCALING, 
-                RON_EPSILON_CENTER, RON_EPSILON_RANGE, 
-                RON_GAMMA_CENTER, RON_GAMMA_RANGE]:
+    if None in [RON_RHO_BASELINE, RON_INPUT_SCALING]:
         raise ValueError("Please set all RON hyperparameters")
+    if not RON_DT_VALUES:
+        raise ValueError("Please set RON_DT_VALUES as a list of time step values to test")
     if not RON_RHO_VALUES:
         raise ValueError("Please set RON_RHO_VALUES as a list of spectral radius values to test")
+    if not RON_EPSILON_CENTER_VALUES:
+        raise ValueError("Please set RON_EPSILON_CENTER_VALUES as a list")
+    if not RON_EPSILON_RANGE_VALUES:
+        raise ValueError("Please set RON_EPSILON_RANGE_VALUES as a list")
+    if not RON_GAMMA_CENTER_VALUES:
+        raise ValueError("Please set RON_GAMMA_CENTER_VALUES as a list")
+    if not RON_GAMMA_RANGE_VALUES:
+        raise ValueError("Please set RON_GAMMA_RANGE_VALUES as a list")
     if not COUPLING_VALUES:
         raise ValueError("Please set COUPLING_VALUES as a list of coupling strengths to test")
-
-# Derived RON parameters
-if args.model_type in ["ron", "both"]:
-    EPSILON_MIN = RON_EPSILON_CENTER - RON_EPSILON_RANGE / 2.0
-    EPSILON_MAX = RON_EPSILON_CENTER + RON_EPSILON_RANGE / 2.0
-    GAMMA_MIN = RON_GAMMA_CENTER - RON_GAMMA_RANGE / 2.0
-    GAMMA_MAX = RON_GAMMA_CENTER + RON_GAMMA_RANGE / 2.0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}\n")
@@ -383,184 +384,242 @@ if __name__ == "__main__":
         print("TESTING RON MODELS")
         print("="*80)
         
-        # 1-layer RON Baseline
+        # 1-layer RON Baseline - Test different dt, epsilon_center, epsilon_range, gamma_center, gamma_range
         print(f"\n{'='*70}")
         print(f"1-Layer RON Baseline ({N_TRIALS} trials)")
+        print(f"Testing dt, epsilon_center, epsilon_range, gamma_center, gamma_range combinations")
         print(f"{'='*70}")
         
-        baseline_ron_results = []
-        for trial in range(N_TRIALS):
-            print(f"\n--- Trial {trial + 1}/{N_TRIALS} ---")
-            
-            model = RandomizedOscillatorsNetwork(
-                n_inp=n_inp,
-                n_hid=N_HID,
-                dt=RON_DT,
-                gamma=(GAMMA_MIN, GAMMA_MAX),
-                epsilon=(EPSILON_MIN, EPSILON_MAX),
-                rho=RON_RHO_BASELINE,
-                input_scaling=RON_INPUT_SCALING,
-                topology="full",
-                device=device,
-            ).to(device)
-            
-            result = train_and_evaluate(
-                f"RON 1-layer (trial {trial+1})",
-                model, train_loader, valid_loader, test_loader, device, args.use_test
-            )
-            result['trial'] = trial + 1
-            result['rho'] = RON_RHO_BASELINE
-            result['model_type'] = 'RON'
-            result['architecture'] = '1-layer'
-            baseline_ron_results.append(result)
-            
-            if args.use_test:
-                print(f"  Train: {result['train_acc']:.4f}, Test: {result['test_acc']:.4f}")
-            else:
-                print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}")
-            
-            del model
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-        
-        # Average baseline results
-        baseline_ron_avg = {
-            'name': 'RON 1-layer (avg)',
-            'model_type': 'RON',
-            'architecture': '1-layer',
-            'train_acc': np.mean([r['train_acc'] for r in baseline_ron_results]),
-            'valid_acc': np.mean([r['valid_acc'] for r in baseline_ron_results]),
-            'test_acc': np.mean([r['test_acc'] for r in baseline_ron_results]),
-            'train_std': np.std([r['train_acc'] for r in baseline_ron_results]),
-            'valid_std': np.std([r['valid_acc'] for r in baseline_ron_results]),
-            'test_std': np.std([r['test_acc'] for r in baseline_ron_results]),
-            'rho': RON_RHO_BASELINE,
-        }
-        results.append(baseline_ron_avg)
-        if args.use_test:
-            print(f"\nBaseline RON Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
-        else:
-            print(f"\nBaseline RON Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
+        for dt_val in RON_DT_VALUES:
+            for eps_center in RON_EPSILON_CENTER_VALUES:
+                for eps_range in RON_EPSILON_RANGE_VALUES:
+                    for gamma_center in RON_GAMMA_CENTER_VALUES:
+                        for gamma_range in RON_GAMMA_RANGE_VALUES:
+                            eps_min = eps_center - eps_range / 2.0
+                            eps_max = eps_center + eps_range / 2.0
+                            gamma_min = gamma_center - gamma_range / 2.0
+                            gamma_max = gamma_center + gamma_range / 2.0
+                            
+                            print(f"\n  Testing dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}")
+                            
+                            baseline_ron_results = []
+                            for trial in range(N_TRIALS):
+                                model = RandomizedOscillatorsNetwork(
+                                    n_inp=n_inp,
+                                    n_hid=N_HID,
+                                    dt=dt_val,
+                                    gamma=(gamma_min, gamma_max),
+                                    epsilon=(eps_min, eps_max),
+                                    rho=RON_RHO_BASELINE,
+                                    input_scaling=RON_INPUT_SCALING,
+                                    topology="full",
+                                    device=device,
+                                ).to(device)
+                                
+                                result = train_and_evaluate(
+                                    f"RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, trial {trial+1})",
+                                    model, train_loader, valid_loader, test_loader, device, args.use_test
+                                )
+                                result['trial'] = trial + 1
+                                result['rho'] = RON_RHO_BASELINE
+                                result['dt'] = dt_val
+                                result['epsilon_center'] = eps_center
+                                result['epsilon_range'] = eps_range
+                                result['gamma_center'] = gamma_center
+                                result['gamma_range'] = gamma_range
+                                result['model_type'] = 'RON'
+                                result['architecture'] = '1-layer'
+                                baseline_ron_results.append(result)
+                                
+                                del model
+                                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                            
+                            # Average baseline results
+                            baseline_ron_avg = {
+                                'name': f'RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, avg)',
+                                'model_type': 'RON',
+                                'architecture': '1-layer',
+                                'train_acc': np.mean([r['train_acc'] for r in baseline_ron_results]),
+                                'valid_acc': np.mean([r['valid_acc'] for r in baseline_ron_results]),
+                                'test_acc': np.mean([r['test_acc'] for r in baseline_ron_results]),
+                                'train_std': np.std([r['train_acc'] for r in baseline_ron_results]),
+                                'valid_std': np.std([r['valid_acc'] for r in baseline_ron_results]),
+                                'test_std': np.std([r['test_acc'] for r in baseline_ron_results]),
+                                'rho': RON_RHO_BASELINE,
+                                'dt': dt_val,
+                                'epsilon_center': eps_center,
+                                'epsilon_range': eps_range,
+                                'gamma_center': gamma_center,
+                                'gamma_range': gamma_range,
+                            }
+                            results.append(baseline_ron_avg)
+                            if args.use_test:
+                                print(f"    Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
+                            else:
+                                print(f"    Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
         
         # N-layer DeepRON with Antisymmetric coupling
         print(f"\n{'='*70}")
         print(f"{args.n_layers}-Layer DeepRON with Antisymmetric Coupling")
+        print(f"Testing dt, epsilon_center, epsilon_range, gamma_center, gamma_range, rho, and coupling combinations")
         print(f"{'='*70}")
         
-        for rho_val in RON_RHO_VALUES:
-            for coup_eps in COUPLING_VALUES:
-                print(f"\n  Testing rho={rho_val}, coupling_epsilon={coup_eps}")
-                
-                antisym_ron_results = []
-                for trial in range(N_TRIALS):
-                    model = DeepRandomizedOscillatorsNetwork(
-                        n_inp=n_inp,
-                        total_units=N_HID,
-                        n_layers=args.n_layers,
-                        dt=RON_DT,
-                        gamma=(GAMMA_MIN, GAMMA_MAX),
-                        epsilon=(EPSILON_MIN, EPSILON_MAX),
-                        rho=rho_val,
-                        input_scaling=RON_INPUT_SCALING,
-                        inter_scaling=RON_INPUT_SCALING,
-                        topology="full",
-                        concat=True,
-                        antisymmetric_coupling=True,
-                        coupling_epsilon=coup_eps,
-                        device=device,
-                    ).to(device)
-                    
-                    result = train_and_evaluate(
-                        f"DeepRON {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
-                        model, train_loader, valid_loader, test_loader, device, args.use_test
-                    )
-                    result['trial'] = trial + 1
-                    result['rho'] = rho_val
-                    result['coupling_epsilon'] = coup_eps
-                    result['model_type'] = 'RON'
-                    result['architecture'] = '5-layer-antisymmetric'
-                    antisym_ron_results.append(result)
-                    
-                    del model
-                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                
-                # Average results
-                antisym_ron_avg = {
-                    'name': f'DeepRON {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, avg)',
-                    'model_type': 'RON',
-                    'architecture': f'{args.n_layers}-layer-antisymmetric',
-                    'train_acc': np.mean([r['train_acc'] for r in antisym_ron_results]),
-                    'valid_acc': np.mean([r['valid_acc'] for r in antisym_ron_results]),
-                    'test_acc': np.mean([r['test_acc'] for r in antisym_ron_results]),
-                    'train_std': np.std([r['train_acc'] for r in antisym_ron_results]),
-                    'valid_std': np.std([r['valid_acc'] for r in antisym_ron_results]),
-                    'test_std': np.std([r['test_acc'] for r in antisym_ron_results]),
-                    'rho': rho_val,
-                    'coupling_epsilon': coup_eps,
-                }
-                results.append(antisym_ron_avg)
-                if args.use_test:
-                    print(f"    Average: Test {antisym_ron_avg['test_acc']*100:.2f}% ± {antisym_ron_avg['test_std']*100:.2f}%")
-                else:
-                    print(f"    Average: Valid {antisym_ron_avg['valid_acc']*100:.2f}% ± {antisym_ron_avg['valid_std']*100:.2f}%")
+        for dt_val in RON_DT_VALUES:
+            for eps_center in RON_EPSILON_CENTER_VALUES:
+                for eps_range in RON_EPSILON_RANGE_VALUES:
+                    for gamma_center in RON_GAMMA_CENTER_VALUES:
+                        for gamma_range in RON_GAMMA_RANGE_VALUES:
+                            eps_min = eps_center - eps_range / 2.0
+                            eps_max = eps_center + eps_range / 2.0
+                            gamma_min = gamma_center - gamma_range / 2.0
+                            gamma_max = gamma_center + gamma_range / 2.0
+                            
+                            for rho_val in RON_RHO_VALUES:
+                                for coup_eps in COUPLING_VALUES:
+                                    print(f"\n  Testing dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, rho={rho_val}, coupling_ε={coup_eps}")
+                                    
+                                    antisym_ron_results = []
+                                    for trial in range(N_TRIALS):
+                                        model = DeepRandomizedOscillatorsNetwork(
+                                            n_inp=n_inp,
+                                            total_units=N_HID,
+                                            n_layers=args.n_layers,
+                                            dt=dt_val,
+                                            gamma=(gamma_min, gamma_max),
+                                            epsilon=(eps_min, eps_max),
+                                            rho=rho_val,
+                                            input_scaling=RON_INPUT_SCALING,
+                                            inter_scaling=RON_INPUT_SCALING,
+                                            topology="full",
+                                            concat=True,
+                                            antisymmetric_coupling=True,
+                                            coupling_epsilon=coup_eps,
+                                            device=device,
+                                        ).to(device)
+                                        
+                                        result = train_and_evaluate(
+                                            f"DeepRON {args.n_layers}-layer Antisym (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, ρ={rho_val}, coup_ε={coup_eps}, trial {trial+1})",
+                                            model, train_loader, valid_loader, test_loader, device, args.use_test
+                                        )
+                                        result['trial'] = trial + 1
+                                        result['rho'] = rho_val
+                                        result['dt'] = dt_val
+                                        result['epsilon_center'] = eps_center
+                                        result['epsilon_range'] = eps_range
+                                        result['gamma_center'] = gamma_center
+                                        result['gamma_range'] = gamma_range
+                                        result['coupling_epsilon'] = coup_eps
+                                        result['model_type'] = 'RON'
+                                        result['architecture'] = '5-layer-antisymmetric'
+                                        antisym_ron_results.append(result)
+                                        
+                                        del model
+                                        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                                    
+                                    # Average results
+                                    antisym_ron_avg = {
+                                        'name': f'DeepRON {args.n_layers}-layer Antisym (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, ρ={rho_val}, coup_ε={coup_eps}, avg)',
+                                        'model_type': 'RON',
+                                        'architecture': f'{args.n_layers}-layer-antisymmetric',
+                                        'train_acc': np.mean([r['train_acc'] for r in antisym_ron_results]),
+                                        'valid_acc': np.mean([r['valid_acc'] for r in antisym_ron_results]),
+                                        'test_acc': np.mean([r['test_acc'] for r in antisym_ron_results]),
+                                        'train_std': np.std([r['train_acc'] for r in antisym_ron_results]),
+                                        'valid_std': np.std([r['valid_acc'] for r in antisym_ron_results]),
+                                        'test_std': np.std([r['test_acc'] for r in antisym_ron_results]),
+                                        'rho': rho_val,
+                                        'dt': dt_val,
+                                        'epsilon_center': eps_center,
+                                        'epsilon_range': eps_range,
+                                        'gamma_center': gamma_center,
+                                        'gamma_range': gamma_range,
+                                        'coupling_epsilon': coup_eps,
+                                    }
+                                    results.append(antisym_ron_avg)
+                                    if args.use_test:
+                                        print(f"    Average: Test {antisym_ron_avg['test_acc']*100:.2f}% ± {antisym_ron_avg['test_std']*100:.2f}%")
+                                    else:
+                                        print(f"    Average: Valid {antisym_ron_avg['valid_acc']*100:.2f}% ± {antisym_ron_avg['valid_std']*100:.2f}%")
         
         # N-layer DeepRON with Cycle topology
         print(f"\n{'='*70}")
         print(f"{args.n_layers}-Layer DeepRON with Cycle Topology")
+        print(f"Testing dt, epsilon_center, epsilon_range, gamma_center, gamma_range, and rho combinations")
         print(f"{'='*70}")
         
-        for rho_val in RON_RHO_VALUES:
-            print(f"\n  Testing rho={rho_val}")
-            
-            cycle_ron_results = []
-            for trial in range(N_TRIALS):
-                model = DeepRandomizedOscillatorsNetwork(
-                    n_inp=n_inp,
-                    total_units=N_HID,
-                    n_layers=args.n_layers,
-                    dt=RON_DT,
-                    gamma=(GAMMA_MIN, GAMMA_MAX),
-                    epsilon=(EPSILON_MIN, EPSILON_MAX),
-                    rho=rho_val,
-                    input_scaling=RON_INPUT_SCALING,
-                    inter_scaling=RON_INPUT_SCALING,
-                    topology="full",
-                    concat=True,
-                    cycle=True,
-                    antisymmetric_coupling=False,
-                    device=device,
-                ).to(device)
-                
-                result = train_and_evaluate(
-                    f"DeepRON {args.n_layers}-layer Cycle (ρ={rho_val}, trial {trial+1})",
-                    model, train_loader, valid_loader, test_loader, device, args.use_test
-                )
-                result['trial'] = trial + 1
-                result['rho'] = rho_val
-                result['model_type'] = 'RON'
-                result['architecture'] = '5-layer-cycle'
-                cycle_ron_results.append(result)
-                
-                del model
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-            
-            # Average results
-            cycle_ron_avg = {
-                'name': f'DeepRON {args.n_layers}-layer Cycle (ρ={rho_val}, avg)',
-                'model_type': 'RON',
-                'architecture': f'{args.n_layers}-layer-cycle',
-                'train_acc': np.mean([r['train_acc'] for r in cycle_ron_results]),
-                'valid_acc': np.mean([r['valid_acc'] for r in cycle_ron_results]),
-                'test_acc': np.mean([r['test_acc'] for r in cycle_ron_results]),
-                'train_std': np.std([r['train_acc'] for r in cycle_ron_results]),
-                'valid_std': np.std([r['valid_acc'] for r in cycle_ron_results]),
-                'test_std': np.std([r['test_acc'] for r in cycle_ron_results]),
-                'rho': rho_val,
-            }
-            results.append(cycle_ron_avg)
-            if args.use_test:
-                print(f"    Average: Test {cycle_ron_avg['test_acc']*100:.2f}% ± {cycle_ron_avg['test_std']*100:.2f}%")
-            else:
-                print(f"    Average: Valid {cycle_ron_avg['valid_acc']*100:.2f}% ± {cycle_ron_avg['valid_std']*100:.2f}%")
+        for dt_val in RON_DT_VALUES:
+            for eps_center in RON_EPSILON_CENTER_VALUES:
+                for eps_range in RON_EPSILON_RANGE_VALUES:
+                    for gamma_center in RON_GAMMA_CENTER_VALUES:
+                        for gamma_range in RON_GAMMA_RANGE_VALUES:
+                            eps_min = eps_center - eps_range / 2.0
+                            eps_max = eps_center + eps_range / 2.0
+                            gamma_min = gamma_center - gamma_range / 2.0
+                            gamma_max = gamma_center + gamma_range / 2.0
+                            
+                            for rho_val in RON_RHO_VALUES:
+                                print(f"\n  Testing dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, rho={rho_val}")
+                                
+                                cycle_ron_results = []
+                                for trial in range(N_TRIALS):
+                                    model = DeepRandomizedOscillatorsNetwork(
+                                        n_inp=n_inp,
+                                        total_units=N_HID,
+                                        n_layers=args.n_layers,
+                                        dt=dt_val,
+                                        gamma=(gamma_min, gamma_max),
+                                        epsilon=(eps_min, eps_max),
+                                        rho=rho_val,
+                                        input_scaling=RON_INPUT_SCALING,
+                                        inter_scaling=RON_INPUT_SCALING,
+                                        topology="full",
+                                        concat=True,
+                                        cycle=True,
+                                        antisymmetric_coupling=False,
+                                        device=device,
+                                    ).to(device)
+                                    
+                                    result = train_and_evaluate(
+                                        f"DeepRON {args.n_layers}-layer Cycle (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, ρ={rho_val}, trial {trial+1})",
+                                        model, train_loader, valid_loader, test_loader, device, args.use_test
+                                    )
+                                    result['trial'] = trial + 1
+                                    result['rho'] = rho_val
+                                    result['dt'] = dt_val
+                                    result['epsilon_center'] = eps_center
+                                    result['epsilon_range'] = eps_range
+                                    result['gamma_center'] = gamma_center
+                                    result['gamma_range'] = gamma_range
+                                    result['model_type'] = 'RON'
+                                    result['architecture'] = '5-layer-cycle'
+                                    cycle_ron_results.append(result)
+                                    
+                                    del model
+                                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                                
+                                # Average results
+                                cycle_ron_avg = {
+                                    'name': f'DeepRON {args.n_layers}-layer Cycle (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, ρ={rho_val}, avg)',
+                                    'model_type': 'RON',
+                                    'architecture': f'{args.n_layers}-layer-cycle',
+                                    'train_acc': np.mean([r['train_acc'] for r in cycle_ron_results]),
+                                    'valid_acc': np.mean([r['valid_acc'] for r in cycle_ron_results]),
+                                    'test_acc': np.mean([r['test_acc'] for r in cycle_ron_results]),
+                                    'train_std': np.std([r['train_acc'] for r in cycle_ron_results]),
+                                    'valid_std': np.std([r['valid_acc'] for r in cycle_ron_results]),
+                                    'test_std': np.std([r['test_acc'] for r in cycle_ron_results]),
+                                    'rho': rho_val,
+                                    'dt': dt_val,
+                                    'epsilon_center': eps_center,
+                                    'epsilon_range': eps_range,
+                                    'gamma_center': gamma_center,
+                                    'gamma_range': gamma_range,
+                                }
+                                results.append(cycle_ron_avg)
+                                if args.use_test:
+                                    print(f"    Average: Test {cycle_ron_avg['test_acc']*100:.2f}% ± {cycle_ron_avg['test_std']*100:.2f}%")
+                                else:
+                                    print(f"    Average: Valid {cycle_ron_avg['valid_acc']*100:.2f}% ± {cycle_ron_avg['valid_std']*100:.2f}%")
     
     # ========================================
     # Summary
@@ -574,13 +633,23 @@ if __name__ == "__main__":
     results_sorted = sorted(results, key=lambda x: x[sort_key], reverse=True)
     
     acc_label = 'Test Acc' if args.use_test else 'Valid Acc'
-    print(f"\n{'Rank':<5} {'Model':<10} {'Architecture':<25} {'Config':<30} {acc_label:<20}")
-    print("-"*90)
+    print(f"\n{'Rank':<5} {'Model':<10} {'Architecture':<25} {'Config':<50} {acc_label:<20}")
+    print("-"*110)
     
     for rank, r in enumerate(results_sorted, 1):
         config_str = f"ρ={r.get('rho', 'N/A'):.3f}"
+        if 'dt' in r:
+            config_str += f", dt={r['dt']}"
+        if 'epsilon_center' in r:
+            config_str += f", ε_c={r['epsilon_center']}"
+        if 'epsilon_range' in r:
+            config_str += f", ε_r={r['epsilon_range']}"
+        if 'gamma_center' in r:
+            config_str += f", γ_c={r['gamma_center']}"
+        if 'gamma_range' in r:
+            config_str += f", γ_r={r['gamma_range']}"
         if 'coupling_epsilon' in r:
-            config_str += f", ε_c={r['coupling_epsilon']}"
+            config_str += f", coup_ε={r['coupling_epsilon']}"
         
         if args.use_test:
             acc_str = f"{r['test_acc']*100:.2f}%"
@@ -591,7 +660,7 @@ if __name__ == "__main__":
             if 'valid_std' in r:
                 acc_str += f" ± {r['valid_std']*100:.2f}%"
         
-        print(f"{rank:<5} {r['model_type']:<10} {r['architecture']:<25} {config_str:<30} {acc_str:<20}")
+        print(f"{rank:<5} {r['model_type']:<10} {r['architecture']:<25} {config_str:<50} {acc_str:<20}")
     
     # Save results to file
     result_file = os.path.join(args.resultroot, "results_summary.txt")
@@ -613,12 +682,14 @@ if __name__ == "__main__":
         
         if args.model_type in ["ron", "both"]:
             f.write("RON Configuration:\n")
-            f.write(f"  DT: {RON_DT}\n")
+            f.write(f"  DT_VALUES: {RON_DT_VALUES}\n")
             f.write(f"  RHO_BASELINE: {RON_RHO_BASELINE}\n")
             f.write(f"  RHO_VALUES: {RON_RHO_VALUES}\n")
             f.write(f"  INPUT_SCALING: {RON_INPUT_SCALING}\n")
-            f.write(f"  EPSILON: ({EPSILON_MIN}, {EPSILON_MAX})\n")
-            f.write(f"  GAMMA: ({GAMMA_MIN}, {GAMMA_MAX})\n\n")
+            f.write(f"  EPSILON_CENTER_VALUES: {RON_EPSILON_CENTER_VALUES}\n")
+            f.write(f"  EPSILON_RANGE_VALUES: {RON_EPSILON_RANGE_VALUES}\n")
+            f.write(f"  GAMMA_CENTER_VALUES: {RON_GAMMA_CENTER_VALUES}\n")
+            f.write(f"  GAMMA_RANGE_VALUES: {RON_GAMMA_RANGE_VALUES}\n\n")
         
         f.write(f"COUPLING_VALUES: {COUPLING_VALUES}\n\n")
         f.write("Results:\n")
@@ -628,6 +699,16 @@ if __name__ == "__main__":
             f.write(f"{r['name']}\n")
             f.write(f"  Model Type: {r['model_type']}\n")
             f.write(f"  Architecture: {r['architecture']}\n")
+            if 'dt' in r:
+                f.write(f"  dt: {r['dt']}\n")
+            if 'epsilon_center' in r:
+                f.write(f"  Epsilon Center: {r['epsilon_center']}\n")
+            if 'epsilon_range' in r:
+                f.write(f"  Epsilon Range: {r['epsilon_range']}\n")
+            if 'gamma_center' in r:
+                f.write(f"  Gamma Center: {r['gamma_center']}\n")
+            if 'gamma_range' in r:
+                f.write(f"  Gamma Range: {r['gamma_range']}\n")
             if 'coupling_epsilon' in r:
                 f.write(f"  Coupling Epsilon: {r['coupling_epsilon']}\n")
             if 'rho' in r:
