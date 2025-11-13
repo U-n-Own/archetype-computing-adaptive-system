@@ -53,7 +53,7 @@ N_TRIALS = 3  # Number of trials to reduce uncertainty
 
 # Hyperparameters for 1-layer RON baseline
 DT = 0.042
-RHO_BASELINE = 0.9  # For 1-layer baseline
+RHO_BASELINE = 9  # For 1-layer baseline
 INP_SCALING = 1.0
 EPSILON_CENTER = 0.51
 EPSILON_RANGE = 0.5
@@ -61,7 +61,7 @@ GAMMA_CENTER = 2.7
 GAMMA_RANGE = 1.0
 
 # Different RHO values to test for 5-layer antisymmetric
-RHO_VALUES = [0.7, 0.8, 0.999]
+RHO_VALUES = [9, 7, 5]
 
 # Derived parameters (divide range by 2 to match smnist.py behavior)
 EPSILON_MIN = EPSILON_CENTER - EPSILON_RANGE / 2.0
