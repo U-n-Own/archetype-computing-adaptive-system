@@ -207,8 +207,6 @@ for i in range(args.trials):
             rho=args.rho,
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,
-            connectivity_input=args.n_hid // args.n_layers,
-            connectivity_inter=args.n_hid // args.n_layers, 
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
