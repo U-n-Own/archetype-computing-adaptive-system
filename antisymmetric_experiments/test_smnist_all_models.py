@@ -72,13 +72,13 @@ ESN_INPUT_SCALING = 1  # Input scaling for ESN
 ESN_LEAKY = 0.001  # Leaky rate for ESN
 
 # RON Hyperparameters
-RON_DT_VALUES = [0.042]  # List of time step values to test (e.g., [0.042, 0.05, 0.1])
+RON_DT_VALUES = [0.042, 0.076, 0.021]  # List of time step values to test (e.g., [0.042, 0.05, 0.1])
 RON_RHO_BASELINE = 9  # Spectral radius for 1-layer RON
-RON_RHO_VALUES = [9]  # List of rho values to test for 5-layer RON
+RON_RHO_VALUES = [9, 0.9]  # List of rho values to test for 5-layer RON
 RON_INPUT_SCALING = 1  # Input scaling for RON
-RON_EPSILON_CENTER_VALUES = [0.51]  # List of center values for epsilon range (e.g., [0.3, 0.51, 0.7])
+RON_EPSILON_CENTER_VALUES = [0.51, 2]  # List of center values for epsilon range (e.g., [0.3, 0.51, 0.7])
 RON_EPSILON_RANGE_VALUES = [0.5]  # List of range values for epsilon (e.g., [0.3, 0.5, 0.7])
-RON_GAMMA_CENTER_VALUES = [2.7]  # List of center values for gamma range (e.g., [2.0, 2.7, 3.5])
+RON_GAMMA_CENTER_VALUES = [2.7, 5]  # List of center values for gamma range (e.g., [2.0, 2.7, 3.5])
 RON_GAMMA_RANGE_VALUES = [1]  # List of range values for gamma (e.g., [0.5, 1.0, 1.5])
 
 # Coupling strength values to test for antisymmetric architectures
