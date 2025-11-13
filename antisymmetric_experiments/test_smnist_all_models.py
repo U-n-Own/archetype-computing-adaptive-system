@@ -1,9 +1,9 @@
 """
 Unified sMNIST Testing: ESN, DeepESN, RON, DeepRON
-Tests both 1-layer and 5-layer architectures with various configurations:
+Tests both 1-layer and multi-layer architectures with various configurations:
 - Standard 1-layer (ESN/RON baseline)
-- 5-layer with antisymmetric coupling (search coupling strength)
-- 5-layer with cycle topology
+- N-layer with antisymmetric coupling (search coupling strength)
+- N-layer with cycle topology
 
 This version combines ESN and RON testing in a single script with consistent
 seeding and evaluation methodology.
@@ -37,6 +37,7 @@ parser.add_argument("--model_type", type=str, default="both",
 parser.add_argument("--n_hid", type=int, default=500, help="Total number of hidden units")
 parser.add_argument("--batch_size", type=int, default=1000, help="Batch size")
 parser.add_argument("--trials", type=int, default=3, help="Number of trials per configuration")
+parser.add_argument("--n_layers", type=int, default=5, help="Number of layers for deep architectures")
 parser.add_argument("--dataroot", type=str, default="data", help="Data directory")
 parser.add_argument("--resultroot", type=str, default="results_smnist_all_models", 
                     help="Results directory")
@@ -54,7 +55,7 @@ os.makedirs(args.resultroot, exist_ok=True)
 
 print("=" * 80)
 print("sMNIST: Unified Model Comparison")
-print("ESN vs RON | 1-layer vs 5-layer | Antisymmetric vs Cycle")
+print(f"ESN vs RON | 1-layer vs {args.n_layers}-layer | Antisymmetric vs Cycle")
 print("=" * 80)
 
 # Configuration
@@ -253,9 +254,9 @@ if __name__ == "__main__":
         else:
             print(f"\nBaseline ESN Average: Valid {baseline_esn_avg['valid_acc']*100:.2f}% ± {baseline_esn_avg['valid_std']*100:.2f}%")
         
-        # 5-layer DeepESN with Antisymmetric coupling
+        # N-layer DeepESN with Antisymmetric coupling
         print(f"\n{'='*70}")
-        print(f"5-Layer DeepESN with Antisymmetric Coupling")
+        print(f"{args.n_layers}-Layer DeepESN with Antisymmetric Coupling")
         print(f"{'='*70}")
         
         for rho_val in ESN_RHO_VALUES:
@@ -279,10 +280,11 @@ if __name__ == "__main__":
                         linear=False,
                         antisymmetric=True,
                         epsilon=coup_eps,
+                        n_layers=args.n_layers,
                     ).to(device)
                     
                     result = train_and_evaluate(
-                        f"DeepESN 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
+                        f"DeepESN {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
                         model, train_loader, valid_loader, test_loader, device, args.use_test
                     )
                     result['trial'] = trial + 1
@@ -297,9 +299,9 @@ if __name__ == "__main__":
                 
                 # Average results
                 antisym_esn_avg = {
-                    'name': f'DeepESN 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, avg)',
+                    'name': f'DeepESN {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, avg)',
                     'model_type': 'ESN',
-                    'architecture': '5-layer-antisymmetric',
+                    'architecture': f'{args.n_layers}-layer-antisymmetric',
                     'train_acc': np.mean([r['train_acc'] for r in antisym_esn_results]),
                     'valid_acc': np.mean([r['valid_acc'] for r in antisym_esn_results]),
                     'test_acc': np.mean([r['test_acc'] for r in antisym_esn_results]),
@@ -315,9 +317,9 @@ if __name__ == "__main__":
                 else:
                     print(f"    Average: Valid {antisym_esn_avg['valid_acc']*100:.2f}% ± {antisym_esn_avg['valid_std']*100:.2f}%")
         
-        # 5-layer DeepESN with Cycle topology
+        # N-layer DeepESN with Cycle topology
         print(f"\n{'='*70}")
-        print(f"5-Layer DeepESN with Cycle Topology")
+        print(f"{args.n_layers}-Layer DeepESN with Cycle Topology")
         print(f"{'='*70}")
         
         for rho_val in ESN_RHO_VALUES:
@@ -338,10 +340,11 @@ if __name__ == "__main__":
                     cycle=True,
                     concat=True,
                     linear=False,
+                    n_layers=args.n_layers,
                 ).to(device)
                 
                 result = train_and_evaluate(
-                    f"DeepESN 5-layer Cycle (ρ={rho_val}, trial {trial+1})",
+                    f"DeepESN {args.n_layers}-layer Cycle (ρ={rho_val}, trial {trial+1})",
                     model, train_loader, valid_loader, test_loader, device, args.use_test
                 )
                 result['trial'] = trial + 1
@@ -355,9 +358,9 @@ if __name__ == "__main__":
             
             # Average results
             cycle_esn_avg = {
-                'name': f'DeepESN 5-layer Cycle (ρ={rho_val}, avg)',
+                'name': f'DeepESN {args.n_layers}-layer Cycle (ρ={rho_val}, avg)',
                 'model_type': 'ESN',
-                'architecture': '5-layer-cycle',
+                'architecture': f'{args.n_layers}-layer-cycle',
                 'train_acc': np.mean([r['train_acc'] for r in cycle_esn_results]),
                 'valid_acc': np.mean([r['valid_acc'] for r in cycle_esn_results]),
                 'test_acc': np.mean([r['test_acc'] for r in cycle_esn_results]),
@@ -438,9 +441,9 @@ if __name__ == "__main__":
         else:
             print(f"\nBaseline RON Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
         
-        # 5-layer DeepRON with Antisymmetric coupling
+        # N-layer DeepRON with Antisymmetric coupling
         print(f"\n{'='*70}")
-        print(f"5-Layer DeepRON with Antisymmetric Coupling")
+        print(f"{args.n_layers}-Layer DeepRON with Antisymmetric Coupling")
         print(f"{'='*70}")
         
         for rho_val in RON_RHO_VALUES:
@@ -452,7 +455,7 @@ if __name__ == "__main__":
                     model = DeepRandomizedOscillatorsNetwork(
                         n_inp=n_inp,
                         total_units=N_HID,
-                        n_layers=5,
+                        n_layers=args.n_layers,
                         dt=RON_DT,
                         gamma=(GAMMA_MIN, GAMMA_MAX),
                         epsilon=(EPSILON_MIN, EPSILON_MAX),
@@ -467,7 +470,7 @@ if __name__ == "__main__":
                     ).to(device)
                     
                     result = train_and_evaluate(
-                        f"DeepRON 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
+                        f"DeepRON {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, trial {trial+1})",
                         model, train_loader, valid_loader, test_loader, device, args.use_test
                     )
                     result['trial'] = trial + 1
@@ -482,9 +485,9 @@ if __name__ == "__main__":
                 
                 # Average results
                 antisym_ron_avg = {
-                    'name': f'DeepRON 5-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, avg)',
+                    'name': f'DeepRON {args.n_layers}-layer Antisym (ρ={rho_val}, ε_c={coup_eps}, avg)',
                     'model_type': 'RON',
-                    'architecture': '5-layer-antisymmetric',
+                    'architecture': f'{args.n_layers}-layer-antisymmetric',
                     'train_acc': np.mean([r['train_acc'] for r in antisym_ron_results]),
                     'valid_acc': np.mean([r['valid_acc'] for r in antisym_ron_results]),
                     'test_acc': np.mean([r['test_acc'] for r in antisym_ron_results]),
@@ -500,9 +503,9 @@ if __name__ == "__main__":
                 else:
                     print(f"    Average: Valid {antisym_ron_avg['valid_acc']*100:.2f}% ± {antisym_ron_avg['valid_std']*100:.2f}%")
         
-        # 5-layer DeepRON with Cycle topology
+        # N-layer DeepRON with Cycle topology
         print(f"\n{'='*70}")
-        print(f"5-Layer DeepRON with Cycle Topology")
+        print(f"{args.n_layers}-Layer DeepRON with Cycle Topology")
         print(f"{'='*70}")
         
         for rho_val in RON_RHO_VALUES:
@@ -513,7 +516,7 @@ if __name__ == "__main__":
                 model = DeepRandomizedOscillatorsNetwork(
                     n_inp=n_inp,
                     total_units=N_HID,
-                    n_layers=5,
+                    n_layers=args.n_layers,
                     dt=RON_DT,
                     gamma=(GAMMA_MIN, GAMMA_MAX),
                     epsilon=(EPSILON_MIN, EPSILON_MAX),
@@ -528,7 +531,7 @@ if __name__ == "__main__":
                 ).to(device)
                 
                 result = train_and_evaluate(
-                    f"DeepRON 5-layer Cycle (ρ={rho_val}, trial {trial+1})",
+                    f"DeepRON {args.n_layers}-layer Cycle (ρ={rho_val}, trial {trial+1})",
                     model, train_loader, valid_loader, test_loader, device, args.use_test
                 )
                 result['trial'] = trial + 1
@@ -542,9 +545,9 @@ if __name__ == "__main__":
             
             # Average results
             cycle_ron_avg = {
-                'name': f'DeepRON 5-layer Cycle (ρ={rho_val}, avg)',
+                'name': f'DeepRON {args.n_layers}-layer Cycle (ρ={rho_val}, avg)',
                 'model_type': 'RON',
-                'architecture': '5-layer-cycle',
+                'architecture': f'{args.n_layers}-layer-cycle',
                 'train_acc': np.mean([r['train_acc'] for r in cycle_ron_results]),
                 'valid_acc': np.mean([r['valid_acc'] for r in cycle_ron_results]),
                 'test_acc': np.mean([r['test_acc'] for r in cycle_ron_results]),
