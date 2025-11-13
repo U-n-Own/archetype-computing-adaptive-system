@@ -226,7 +226,10 @@ if __name__ == "__main__":
             result['architecture'] = '1-layer'
             baseline_esn_results.append(result)
             
-            print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}, Test: {result['test_acc']:.4f}")
+            if args.use_test:
+                print(f"  Train: {result['train_acc']:.4f}, Test: {result['test_acc']:.4f}")
+            else:
+                print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}")
             
             del model
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -245,7 +248,10 @@ if __name__ == "__main__":
             'rho': ESN_RHO_BASELINE,
         }
         results.append(baseline_esn_avg)
-        print(f"\nBaseline ESN Average: Test {baseline_esn_avg['test_acc']*100:.2f}% ± {baseline_esn_avg['test_std']*100:.2f}%")
+        if args.use_test:
+            print(f"\nBaseline ESN Average: Test {baseline_esn_avg['test_acc']*100:.2f}% ± {baseline_esn_avg['test_std']*100:.2f}%")
+        else:
+            print(f"\nBaseline ESN Average: Valid {baseline_esn_avg['valid_acc']*100:.2f}% ± {baseline_esn_avg['valid_std']*100:.2f}%")
         
         # 5-layer DeepESN with Antisymmetric coupling
         print(f"\n{'='*70}")
@@ -304,7 +310,10 @@ if __name__ == "__main__":
                     'coupling_epsilon': coup_eps,
                 }
                 results.append(antisym_esn_avg)
-                print(f"    Average: Test {antisym_esn_avg['test_acc']*100:.2f}% ± {antisym_esn_avg['test_std']*100:.2f}%")
+                if args.use_test:
+                    print(f"    Average: Test {antisym_esn_avg['test_acc']*100:.2f}% ± {antisym_esn_avg['test_std']*100:.2f}%")
+                else:
+                    print(f"    Average: Valid {antisym_esn_avg['valid_acc']*100:.2f}% ± {antisym_esn_avg['valid_std']*100:.2f}%")
         
         # 5-layer DeepESN with Cycle topology
         print(f"\n{'='*70}")
@@ -358,7 +367,10 @@ if __name__ == "__main__":
                 'rho': rho_val,
             }
             results.append(cycle_esn_avg)
-            print(f"    Average: Test {cycle_esn_avg['test_acc']*100:.2f}% ± {cycle_esn_avg['test_std']*100:.2f}%")
+            if args.use_test:
+                print(f"    Average: Test {cycle_esn_avg['test_acc']*100:.2f}% ± {cycle_esn_avg['test_std']*100:.2f}%")
+            else:
+                print(f"    Average: Valid {cycle_esn_avg['valid_acc']*100:.2f}% ± {cycle_esn_avg['valid_std']*100:.2f}%")
     
     # ========================================
     # RON MODELS
@@ -399,7 +411,10 @@ if __name__ == "__main__":
             result['architecture'] = '1-layer'
             baseline_ron_results.append(result)
             
-            print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}, Test: {result['test_acc']:.4f}")
+            if args.use_test:
+                print(f"  Train: {result['train_acc']:.4f}, Test: {result['test_acc']:.4f}")
+            else:
+                print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}")
             
             del model
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -418,7 +433,10 @@ if __name__ == "__main__":
             'rho': RON_RHO_BASELINE,
         }
         results.append(baseline_ron_avg)
-        print(f"\nBaseline RON Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
+        if args.use_test:
+            print(f"\nBaseline RON Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
+        else:
+            print(f"\nBaseline RON Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
         
         # 5-layer DeepRON with Antisymmetric coupling
         print(f"\n{'='*70}")
@@ -477,7 +495,10 @@ if __name__ == "__main__":
                     'coupling_epsilon': coup_eps,
                 }
                 results.append(antisym_ron_avg)
-                print(f"    Average: Test {antisym_ron_avg['test_acc']*100:.2f}% ± {antisym_ron_avg['test_std']*100:.2f}%")
+                if args.use_test:
+                    print(f"    Average: Test {antisym_ron_avg['test_acc']*100:.2f}% ± {antisym_ron_avg['test_std']*100:.2f}%")
+                else:
+                    print(f"    Average: Valid {antisym_ron_avg['valid_acc']*100:.2f}% ± {antisym_ron_avg['valid_std']*100:.2f}%")
         
         # 5-layer DeepRON with Cycle topology
         print(f"\n{'='*70}")
@@ -533,7 +554,10 @@ if __name__ == "__main__":
                 'rho': rho_val,
             }
             results.append(cycle_ron_avg)
-            print(f"    Average: Test {cycle_ron_avg['test_acc']*100:.2f}% ± {cycle_ron_avg['test_std']*100:.2f}%")
+            if args.use_test:
+                print(f"    Average: Test {cycle_ron_avg['test_acc']*100:.2f}% ± {cycle_ron_avg['test_std']*100:.2f}%")
+            else:
+                print(f"    Average: Valid {cycle_ron_avg['valid_acc']*100:.2f}% ± {cycle_ron_avg['valid_std']*100:.2f}%")
     
     # ========================================
     # Summary
@@ -542,10 +566,12 @@ if __name__ == "__main__":
     print("RESULTS SUMMARY")
     print("="*80)
     
-    # Sort by test accuracy
-    results_sorted = sorted(results, key=lambda x: x['test_acc'], reverse=True)
+    # Sort by test or valid accuracy depending on use_test flag
+    sort_key = 'test_acc' if args.use_test else 'valid_acc'
+    results_sorted = sorted(results, key=lambda x: x[sort_key], reverse=True)
     
-    print(f"\n{'Rank':<5} {'Model':<10} {'Architecture':<25} {'Config':<30} {'Test Acc':<20}")
+    acc_label = 'Test Acc' if args.use_test else 'Valid Acc'
+    print(f"\n{'Rank':<5} {'Model':<10} {'Architecture':<25} {'Config':<30} {acc_label:<20}")
     print("-"*90)
     
     for rank, r in enumerate(results_sorted, 1):
@@ -553,11 +579,16 @@ if __name__ == "__main__":
         if 'coupling_epsilon' in r:
             config_str += f", ε_c={r['coupling_epsilon']}"
         
-        test_str = f"{r['test_acc']*100:.2f}%"
-        if 'test_std' in r:
-            test_str += f" ± {r['test_std']*100:.2f}%"
+        if args.use_test:
+            acc_str = f"{r['test_acc']*100:.2f}%"
+            if 'test_std' in r:
+                acc_str += f" ± {r['test_std']*100:.2f}%"
+        else:
+            acc_str = f"{r['valid_acc']*100:.2f}%"
+            if 'valid_std' in r:
+                acc_str += f" ± {r['valid_std']*100:.2f}%"
         
-        print(f"{rank:<5} {r['model_type']:<10} {r['architecture']:<25} {config_str:<30} {test_str:<20}")
+        print(f"{rank:<5} {r['model_type']:<10} {r['architecture']:<25} {config_str:<30} {acc_str:<20}")
     
     # Save results to file
     result_file = os.path.join(args.resultroot, "results_summary.txt")
