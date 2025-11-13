@@ -44,6 +44,8 @@ parser.add_argument("--resultroot", type=str, default="results_npcifar10_all_mod
 parser.add_argument("--seq_length", type=int, default=1000, 
                     help="Total sequence length (default: 1000)")
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation set")
+parser.add_argument("--subset_size", type=int, default=None, 
+                    help="Use stratified subset of training data (e.g., 5000 instead of 50000 for faster testing)")
 args = parser.parse_args()
 
 # Set the seed for reproducibility
@@ -230,7 +232,10 @@ if __name__ == "__main__":
     train_loader, valid_loader, test_loader = get_cifar10_data(
         DATAROOT, 
         bs_train=BATCH_SIZE,
-        bs_test=BATCH_SIZE
+        bs_test=BATCH_SIZE,
+        subset_size=args.subset_size,
+        stratify=True,
+        seed=args.seed
     )
     print(f"Dataset loaded: {len(train_loader.dataset)} train, "
           f"{len(valid_loader.dataset)} valid, {len(test_loader.dataset)} test\n")
@@ -317,9 +322,9 @@ if __name__ == "__main__":
                         spectral_radius=rho_val,
                         input_scaling=ESN_INPUT_SCALING,
                         inter_scaling=ESN_INPUT_SCALING,
-                        connectivity_recurrent=N_HID // 5,
-                        connectivity_input=N_HID // 5,
-                        connectivity_inter=N_HID // 5,
+                        connectivity_recurrent=N_HID,
+                        connectivity_input=N_HID,
+                        connectivity_inter=N_HID,
                         leaky=ESN_LEAKY,
                         cycle=False,
                         concat=True,
@@ -375,9 +380,9 @@ if __name__ == "__main__":
                     spectral_radius=rho_val,
                     input_scaling=ESN_INPUT_SCALING,
                     inter_scaling=ESN_INPUT_SCALING,
-                    connectivity_recurrent=N_HID // 5,
-                    connectivity_input=N_HID // 5,
-                    connectivity_inter=N_HID // 5,
+                    connectivity_recurrent=N_HID,
+                    connectivity_input=N_HID,
+                    connectivity_inter=N_HID,
                     leaky=ESN_LEAKY,
                     cycle=True,
                     concat=True,

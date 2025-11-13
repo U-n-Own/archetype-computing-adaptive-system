@@ -176,23 +176,22 @@ class RandomizedOscillatorsNetwork(nn.Module):
             # Project h_last with cycle_kernel and add to the input
             cycle_part = torch.matmul(h_last, self.cycle_kernel.to(dtype=x.dtype))
         
-        # Add antisymmetric coupling if enabled
+        # Add antisymmetric coupling 
         if self.antisymmetric_coupling:
             # Backward coupling: C * h_{l-1}^{(t-1)}
             if h_prev_layer is not None and self.C_coupling is not None:
-                # Check dimension compatibility
                 if h_prev_layer.shape[1] == self.C_coupling.shape[0]:
                     backward_coupling = torch.matmul(h_prev_layer.to(dtype=x.dtype), self.C_coupling.to(dtype=x.dtype))
                     antisymmetric_part = antisymmetric_part + backward_coupling
             
             # Forward coupling: -C^T * h_{l+1}^{(t-1)}
             if h_next_layer is not None and self.C_coupling_T_neg is not None:
-                # Check dimension compatibility
                 if h_next_layer.shape[1] == self.C_coupling_T_neg.shape[0]:
                     forward_coupling = torch.matmul(h_next_layer.to(dtype=x.dtype), self.C_coupling_T_neg.to(dtype=x.dtype))
                     antisymmetric_part = antisymmetric_part + forward_coupling
             
-            # Scale by coupling epsilon and clamp to prevent extreme values
+            #!TODO Scale by coupling epsilon and clamp to prevent extreme values, need testing
+            # Antisym contribution = (-forward + backward)* coupling_epsilon
             antisymmetric_contribution = self.coupling_epsilon * antisymmetric_part
             antisymmetric_contribution = torch.clamp(antisymmetric_contribution, min=-10.0, max=10.0)
         else:
@@ -281,9 +280,6 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         sparsity=0.0,
         device="cuda",
         concat: bool = True,
-        # TODO implement sparse connectivity later...
-        connectivity_input: int = 10,
-        connectivity_inter: int = 10,
         cycle: bool = False,
         linear: bool = False,
         antisymmetric_coupling: bool = False,
@@ -303,7 +299,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         self.n_layers = n_layers
         self.total_units = total_units
         self.reservoir_scaler = reservoir_scaler
-        #self.n_inp = n_inp
+        self.n_inp = n_inp
         self.layers = nn.ModuleList()   
         self.cycle = cycle
         self.linear = linear
@@ -318,8 +314,6 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
             self.layer_units = total_units
             
         input_scaling_others = inter_scaling
-        connectivity_input_1 = connectivity_input
-        connectivity_input_others = connectivity_inter
         
         deepron_layers = [
             RandomizedOscillatorsNetwork(
@@ -335,9 +329,6 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     antisymmetric_coupling=antisymmetric_coupling,
                                     coupling_epsilon=coupling_epsilon,
                                     device=device, 
-                                    #TODO still sparse connectivity to implement
-                                    #connectivity_input=connectivity_input_1,
-                                    #connectivity_recurrent=connectivity_input_others,
             )
         ]
             

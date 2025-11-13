@@ -41,6 +41,8 @@ parser.add_argument("--dataroot", type=str, default="data", help="Data directory
 parser.add_argument("--resultroot", type=str, default="results_psmnist_all_models", 
                     help="Results directory")
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation set")
+parser.add_argument("--subset_size", type=int, default=None, 
+                    help="Use stratified subset of training data (e.g., 6000 instead of 60000 for faster testing)")
 args = parser.parse_args()
 
 # Set the seed for reproducibility
@@ -177,7 +179,9 @@ if __name__ == "__main__":
         DATAROOT, 
         bs_train=BATCH_SIZE,
         bs_test=BATCH_SIZE,
-        seed=args.seed
+        seed=args.seed,
+        subset_size=args.subset_size,
+        stratify=True
     )
     print(f"Dataset loaded: {len(train_loader.dataset)} train, "
           f"{len(valid_loader.dataset)} valid, {len(test_loader.dataset)} test")
@@ -265,9 +269,9 @@ if __name__ == "__main__":
                         spectral_radius=rho_val,
                         input_scaling=ESN_INPUT_SCALING,
                         inter_scaling=ESN_INPUT_SCALING,
-                        connectivity_recurrent=N_HID // 5,
-                        connectivity_input=N_HID // 5,
-                        connectivity_inter=N_HID // 5,
+                        connectivity_recurrent=N_HID,
+                        connectivity_input=N_HID,
+                        connectivity_inter=N_HID,
                         leaky=ESN_LEAKY,
                         cycle=False,
                         concat=True,
@@ -323,9 +327,9 @@ if __name__ == "__main__":
                     spectral_radius=rho_val,
                     input_scaling=ESN_INPUT_SCALING,
                     inter_scaling=ESN_INPUT_SCALING,
-                    connectivity_recurrent=N_HID // 5,
-                    connectivity_input=N_HID // 5,
-                    connectivity_inter=N_HID // 5,
+                    connectivity_recurrent=N_HID,
+                    connectivity_input=N_HID,
+                    connectivity_inter=N_HID,
                     leaky=ESN_LEAKY,
                     cycle=True,
                     concat=True,
@@ -446,7 +450,7 @@ if __name__ == "__main__":
                         concat=True,
                         antisymmetric_coupling=True,
                         coupling_epsilon=coup_eps,
-                        device=device,
+                        device=device
                     ).to(device)
                     
                     result = train_and_evaluate(

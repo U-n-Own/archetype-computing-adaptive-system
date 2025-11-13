@@ -264,9 +264,9 @@ if __name__ == "__main__":
                         spectral_radius=rho_val,
                         input_scaling=ESN_INPUT_SCALING,
                         inter_scaling=ESN_INPUT_SCALING,
-                        connectivity_recurrent=N_HID // 5,
-                        connectivity_input=N_HID // 5,
-                        connectivity_inter=N_HID // 5,
+                        connectivity_recurrent=N_HID,
+                        connectivity_input=N_HID,
+                        connectivity_inter=N_HID,
                         leaky=ESN_LEAKY,
                         cycle=False,
                         concat=True,
@@ -322,9 +322,9 @@ if __name__ == "__main__":
                     spectral_radius=rho_val,
                     input_scaling=ESN_INPUT_SCALING,
                     inter_scaling=ESN_INPUT_SCALING,
-                    connectivity_recurrent=N_HID // 5,
-                    connectivity_input=N_HID // 5,
-                    connectivity_inter=N_HID // 5,
+                    connectivity_recurrent=N_HID,
+                    connectivity_input=N_HID,
+                    connectivity_inter=N_HID,
                     leaky=ESN_LEAKY,
                     cycle=True,
                     concat=True,
@@ -446,8 +446,6 @@ if __name__ == "__main__":
                         antisymmetric_coupling=True,
                         coupling_epsilon=coup_eps,
                         device=device,
-                        connectivity_input=N_HID // 5,
-                        connectivity_inter=N_HID // 5,
                     ).to(device)
                     
                     result = train_and_evaluate(
@@ -506,8 +504,6 @@ if __name__ == "__main__":
                     cycle=True,
                     antisymmetric_coupling=False,
                     device=device,
-                    connectivity_input=N_HID // 5,
-                    connectivity_inter=N_HID // 5,
                 ).to(device)
                 
                 result = train_and_evaluate(

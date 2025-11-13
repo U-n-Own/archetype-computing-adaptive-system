@@ -97,7 +97,8 @@ class ReservoirCell(torch.nn.Module):
         
         
         if self.cycle:
-            # For single unit cycle we need to handle it differently
+            # For single unit cycle we need to handle it differently, since current implementation
+            # with sparse_recurrent_tensor_init does not work on 1x1 sparse matrices
             if self.units == 1:
                 input_weight = self.input_scaling * (torch.randint(0, 2, (input_size, 1)) * 2 - 1).float()
                 self.kernel = nn.Parameter(input_weight, requires_grad=False)
@@ -109,7 +110,7 @@ class ReservoirCell(torch.nn.Module):
                 input_weights = self.input_scaling * (torch.randint(0, 2, (input_size, self.units)) * 2 - 1).float()
                 self.kernel = nn.Parameter(input_weights, requires_grad=False)
                 
-                # Internal recurrent connections within the layer (reduced to allow for cycle connections)
+                # If connectivity_recurrent is 0, we create a zero recurrent matrix
                 if connectivity_recurrent > 0:
                     W = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
                     # maybe here we can multiply rho by some small number to reduce a littel bit spectral radius effect
@@ -444,7 +445,6 @@ class DeepReservoir(torch.nn.Module):
         batch_size, seq_len, _ = X.shape
         
         if self.antisymmetric:
-            # Antisymmetric coupling mode - requires layer interaction at each timestep
             # Initialize hidden states for each layer
             layer_hidden_states = []
             for i, res_layer in enumerate(self.reservoir):
@@ -453,9 +453,8 @@ class DeepReservoir(torch.nn.Module):
             layer_states = [[] for _ in range(len(self.reservoir))]
             
             for t in range(seq_len):
-                # For antisymmetric coupling, use standard input propagation
-                # but layers need to know about their neighbors for coupling
-                current_input = X[:, t, :] if t == 0 else None  # Only first layer gets external input
+                # Only first layer gets external input
+                current_input = X[:, t, :] if t == 0 else None  
                 new_hidden_states = []
                 
                 for i, res_layer in enumerate(self.reservoir):
@@ -470,7 +469,7 @@ class DeepReservoir(torch.nn.Module):
                     h_prev_layer = layer_hidden_states[i-1] if i > 0 else None
                     h_next_layer = layer_hidden_states[i+1] if i < len(self.reservoir) - 1 else None
                     
-                    # Forward through the layer with antisymmetric coupling
+                    # Forward pass 
                     layer_output, layer_hidden = res_layer.net(
                         layer_input,
                         layer_hidden_states[i],  # Previous hidden state of this layer
@@ -518,7 +517,6 @@ class DeepReservoir(torch.nn.Module):
                         # all layers can receive the cycle input, instead if set to 
                         # first_layer = (i == 0) only the first layer receives the cycle input
                         first_layer=True,  # All layers can receive cycle input
-                        #first_layer=i == 0,  # Only the first layer is considered the first layer
                         h_last=prev_layer_output  # Ring connection input
                     )
                     
@@ -533,7 +531,7 @@ class DeepReservoir(torch.nn.Module):
                 states.append(stacked_states)
                 states_last.append(stacked_states[:, -1, :])
         else:
-            # Standard non-cycle behavior
+            # Standard behaviour
             for i, res_layer in enumerate(self.reservoir):
                 [X, h_last] = res_layer(X)
                 states.append(X)
@@ -546,69 +544,3 @@ class DeepReservoir(torch.nn.Module):
             states = states[-1]
             
         return states, states_last
-    
-    def old_forward(self, X: torch.Tensor):
-        """Forward pass.
-
-        Args:
-            X (torch.Tensor): Input tensor, shaped as (batch, seq_len, n_inp).
-        Returns:
-            torch.Tensor: Output tensor, shaped as (batch, seq_len, n_out).
-        """
-        states = []  # list of all the states in all the layers
-        states_last = []  # list of the states in all the layers for the last time step
-        # states_last is a list because different layers may have different size.
-        batch_size, seq_len, _ = X.shape
-        
-        if self.cycle:
-            batch_size, seq_len, _ = X.shape
-            
-            # Initialize hidden states for each layer (unit) - these represent the full reservoir state
-            h = torch.zeros(batch_size, len(self.reservoir)).to(X.device)
-            layer_states = [[] for _ in range(len(self.reservoir))]
-            
-            for t in range(seq_len):
-                current_input = X[:, t, :]  # Original input at time t
-                new_h = torch.zeros(batch_size, len(self.reservoir)).to(X.device)
-                
-                for i, res_layer in enumerate(self.reservoir):
-                    if i == 0:
-                        # First unit gets feedback from last unit (cycle connection)
-                        prev_unit_state = h[:, -1:] if h.shape[1] > 1 else torch.zeros(batch_size, 1).to(X.device)
-                    else:
-                        # Other units get state from previous unit
-                        prev_unit_state = h[:, i-1:i]
-                    
-                    unit_output, unit_hidden = res_layer.net(
-                        current_input, torch.zeros(batch_size, 1).to(X.device), 
-                        first_layer=True, h_last=prev_unit_state
-                    )
-                    new_h[:, i:i+1] = unit_output
-                    
-                    # Store state for this unit and timestep
-                    layer_states[i].append(unit_output)
-                
-                # Update hidden state for next timestep
-                h = new_h
-            
-            # Convert to proper format
-            for i in range(len(self.reservoir)):
-                stacked_states = torch.stack(layer_states[i], dim=1)
-                states.append(stacked_states)
-                states_last.append(stacked_states[:, -1, :])
-        else:
-            # standard behaviour
-            for i, res_layer in enumerate(self.reservoir):
-                [X, h_last] = res_layer(X)
-                states.append(X)
-                states_last.append(h_last)
-        
-            states_uncat = states
-        
-        if self.concat:
-            states = torch.cat(states, dim=2)
-        else:
-            # Original behavior: return only last layer
-            states = states[-1]
-            
-        return states, states_last#, states_uncat
