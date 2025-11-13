@@ -2,12 +2,15 @@ import os
 
 import torch
 import torchvision
-from torch.utils.data import DataLoader
+import numpy as np
+from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
+from sklearn.model_selection import train_test_split
 
 
 def get_mnist_data(
-    root: os.PathLike, bs_train: int, bs_test: int, valid_perc: int = 10
+    root: os.PathLike, bs_train: int, bs_test: int, valid_perc: int = 10,
+    subset_size: int = None, stratify: bool = True, seed: int = 42
 ):
     """Get the MNIST dataset and return the train, validation and test dataloaders.
 
@@ -17,6 +20,11 @@ def get_mnist_data(
         bs_test (int): Batch size for the validation and test dataloaders.
         valid_perc (int): Percentage of the train dataset to use for
             validation. Defaults to 10.
+        subset_size (int, optional): If provided, use only this many training samples
+            (e.g., 6000 instead of 60000). Useful for faster testing.
+        stratify (bool): If True and subset_size is set, maintain class distribution
+            when sampling subset. Defaults to True.
+        seed (int): Random seed for reproducibility. Defaults to 42.
     """
     train_dataset = torchvision.datasets.MNIST(
         root=root, train=True, transform=transforms.ToTensor(), download=True
@@ -25,6 +33,28 @@ def get_mnist_data(
     test_dataset = torchvision.datasets.MNIST(
         root=root, train=False, transform=transforms.ToTensor()
     )
+
+    # If subset_size is specified, create a stratified subset
+    if subset_size is not None and subset_size < len(train_dataset):
+        # Get all labels
+        labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
+        indices = np.arange(len(train_dataset))
+        
+        if stratify:
+            # Use stratified sampling to maintain class distribution
+            subset_indices, _ = train_test_split(
+                indices,
+                train_size=subset_size,
+                stratify=labels,
+                random_state=seed
+            )
+        else:
+            # Random sampling without stratification
+            rng = np.random.RandomState(seed)
+            subset_indices = rng.choice(indices, size=subset_size, replace=False)
+        
+        train_dataset = Subset(train_dataset, subset_indices)
+        print(f"Using stratified subset: {len(train_dataset)} / 60000 training samples")
 
     valid_size = int(len(train_dataset) * (valid_perc / 100.0))
     train_size = len(train_dataset) - valid_size

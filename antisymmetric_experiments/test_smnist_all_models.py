@@ -41,6 +41,8 @@ parser.add_argument("--dataroot", type=str, default="data", help="Data directory
 parser.add_argument("--resultroot", type=str, default="results_smnist_all_models", 
                     help="Results directory")
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation set")
+parser.add_argument("--subset_size", type=int, default=None, 
+                    help="Use stratified subset of training data (e.g., 6000 instead of 60000 for faster testing)")
 args = parser.parse_args()
 
 # Set the seed for reproducibility
@@ -172,7 +174,10 @@ if __name__ == "__main__":
     train_loader, valid_loader, test_loader = get_mnist_data(
         DATAROOT, 
         bs_train=BATCH_SIZE,
-        bs_test=BATCH_SIZE
+        bs_test=BATCH_SIZE,
+        subset_size=args.subset_size,
+        stratify=True,
+        seed=args.seed
     )
     print(f"Dataset loaded: {len(train_loader.dataset)} train, "
           f"{len(valid_loader.dataset)} valid, {len(test_loader.dataset)} test\n")
