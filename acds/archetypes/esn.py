@@ -215,12 +215,9 @@ class ReservoirCell(torch.nn.Module):
         else:
             output = torch.tanh(total_input)
             
-        # Apply leaky integration if not in cycle mode
-        if self.cycle:
-            return output, output
-        else:
-            leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
-            return leaky_output, leaky_output
+        # Compute leaky integration
+        leaky_output = h_prev * (1 - self.leaky) + (output * self.leaky)
+        return leaky_output, leaky_output
 class ReservoirLayer(torch.nn.Module):
     """Shallow reservoir to be used as Recurrent Neural Network layer.
 
