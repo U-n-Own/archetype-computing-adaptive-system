@@ -506,7 +506,12 @@ class DeepReservoir(torch.nn.Module):
                     # Get previous layer's output for ring connection
                     if i == 0:
                         # First layer gets feedback from last layer (closing the ring)
-                        prev_layer_output = layer_hidden_states[-1] if len(self.reservoir) > 1 else torch.zeros(batch_size, res_layer.net.units).to(X.device)
+                        # For single layer, use its own previous state (self-feedback)
+                        if len(self.reservoir) > 1:
+                            prev_layer_output = layer_hidden_states[-1]
+                        else:
+                            # Single layer: self-feedback from its own previous timestep
+                            prev_layer_output = layer_hidden_states[0]
                     else:
                         prev_layer_output = layer_hidden_states[i-1]
                     
