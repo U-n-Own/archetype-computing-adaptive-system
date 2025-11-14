@@ -13,6 +13,7 @@ import sys
 import argparse
 import numpy as np
 import torch
+from datetime import datetime
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
@@ -44,6 +45,8 @@ parser.add_argument("--resultroot", type=str, default="results_psmnist_all_model
 parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation set")
 parser.add_argument("--subset_size", type=int, default=None, 
                     help="Use stratified subset of training data (e.g., 6000 instead of 60000 for faster testing)")
+parser.add_argument("--skip_baseline_validation", action="store_true", 
+                    help="Skip validation/test evaluation for baseline 1-layer models")
 args = parser.parse_args()
 
 # Set the seed for reproducibility
@@ -137,7 +140,7 @@ def evaluate_model(model, data_loader, classifier, scaler, device):
     return classifier.score(activations, ys)
 
 
-def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader, device, use_test=False):
+def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loader, device, use_test=False, skip_validation=False):
     """Train readout and evaluate model."""
     print(f"\n  Training {model_name}...")
     
@@ -163,8 +166,12 @@ def train_and_evaluate(model_name, model, train_loader, valid_loader, test_loade
     
     # Evaluate
     train_acc = evaluate_model(model, train_loader, classifier, scaler, device)
-    valid_acc = evaluate_model(model, valid_loader, classifier, scaler, device) if not use_test else 0.0
-    test_acc = evaluate_model(model, test_loader, classifier, scaler, device) if use_test else 0.0
+    if skip_validation:
+        valid_acc = 0.0
+        test_acc = 0.0
+    else:
+        valid_acc = evaluate_model(model, valid_loader, classifier, scaler, device) if not use_test else 0.0
+        test_acc = evaluate_model(model, test_loader, classifier, scaler, device) if use_test else 0.0
     
     return {
         'name': model_name,
@@ -225,7 +232,7 @@ if __name__ == "__main__":
             
             result = train_and_evaluate(
                 f"ESN 1-layer (trial {trial+1})",
-                model, train_loader, valid_loader, test_loader, device, args.use_test
+                model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
             )
             result['trial'] = trial + 1
             result['rho'] = ESN_RHO_BASELINE
@@ -423,7 +430,7 @@ if __name__ == "__main__":
                                 
                                 result = train_and_evaluate(
                                     f"RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, trial {trial+1})",
-                                    model, train_loader, valid_loader, test_loader, device, args.use_test
+                                    model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
                                 )
                                 result['trial'] = trial + 1
                                 result['rho'] = RON_RHO_BASELINE
@@ -668,7 +675,8 @@ if __name__ == "__main__":
         print(f"{rank:<5} {r['model_type']:<10} {r['architecture']:<25} {config_str:<30} {acc_str:<20}")
     
     # Save results to file
-    result_file = os.path.join(args.resultroot, "results_summary.txt")
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_file = os.path.join(args.resultroot, f"results_summary_{args.n_layers}layer_{date_str}.txt")
     with open(result_file, 'w') as f:
         f.write("psMNIST Unified Model Comparison Results\n")
         f.write("="*80 + "\n\n")
