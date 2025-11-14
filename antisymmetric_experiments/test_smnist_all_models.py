@@ -67,22 +67,22 @@ N_TRIALS = args.trials
 # Hyperparameters - LEAVE BLANK FOR USER TO FILL
 # ESN Hyperparameters
 ESN_RHO_BASELINE = 0.999  # Spectral radius for 1-layer ESN
-ESN_RHO_VALUES = [0.999]  # List of rho values to test for 5-layer ESN, e.g., [0.7, 0.8, 0.9]
+ESN_RHO_VALUES = [0.999,0.7,0.8]  # List of rho values to test for 5-layer ESN, e.g., [0.7, 0.8, 0.9]
 ESN_INPUT_SCALING = 1  # Input scaling for ESN
 ESN_LEAKY = 0.001  # Leaky rate for ESN
 
 # RON Hyperparameters
-RON_DT_VALUES = [0.042, 0.076, 0.021]  # List of time step values to test (e.g., [0.042, 0.05, 0.1])
+RON_DT_VALUES = [0.021]  # List of time step values to test (e.g., [0.042, 0.05, 0.1])
 RON_RHO_BASELINE = 9  # Spectral radius for 1-layer RON
 RON_RHO_VALUES = [9, 0.9]  # List of rho values to test for 5-layer RON
 RON_INPUT_SCALING = 1  # Input scaling for RON
-RON_EPSILON_CENTER_VALUES = [0.51, 2]  # List of center values for epsilon range (e.g., [0.3, 0.51, 0.7])
+RON_EPSILON_CENTER_VALUES = [0.51]  # List of center values for epsilon range (e.g., [0.3, 0.51, 0.7])
 RON_EPSILON_RANGE_VALUES = [0.5]  # List of range values for epsilon (e.g., [0.3, 0.5, 0.7])
-RON_GAMMA_CENTER_VALUES = [2.7, 5]  # List of center values for gamma range (e.g., [2.0, 2.7, 3.5])
+RON_GAMMA_CENTER_VALUES = [2.7]  # List of center values for gamma range (e.g., [2.0, 2.7, 3.5])
 RON_GAMMA_RANGE_VALUES = [1]  # List of range values for gamma (e.g., [0.5, 1.0, 1.5])
 
 # Coupling strength values to test for antisymmetric architectures
-COUPLING_VALUES = [5, 10, 20]  # e.g., [5.0, 10.0, 20.0, 50.0]
+COUPLING_VALUES = [0.5, 2, 10, 20]  # e.g., [5.0, 10.0, 20.0, 50.0]
 
 # Validate hyperparameters
 if args.model_type in ["esn", "both"]:
