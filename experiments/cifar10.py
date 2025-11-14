@@ -204,14 +204,16 @@ for trial in range(args.trials):
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.diffusive_gamma,
-            args.rho,
-            args.inp_scaling,
+            n_inp=n_inp,
+            n_hid=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            inp_scaling=args.inp_scaling,
+            inter_scaling=args.inp_scaling,
+            rho=args.rho,
+            cycle=args.cycle,
+            linear=False,   
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
@@ -255,8 +257,6 @@ for trial in range(args.trials):
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
             cycle=args.cycle,
-            connectivity_input=args.n_hid // args.n_layers,
-            connectivity_inter=args.n_hid // args.n_layers,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
