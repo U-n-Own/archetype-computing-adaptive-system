@@ -211,61 +211,78 @@ if __name__ == "__main__":
         print(f"1-Layer ESN Baseline ({N_TRIALS} trials)")
         print(f"{'='*70}")
         
-        baseline_esn_results = []
-        for trial in range(N_TRIALS):
-            print(f"\n--- Trial {trial + 1}/{N_TRIALS} ---")
-            
-            model = DeepReservoir(
-                input_size=n_inp,
-                tot_units=N_HID,
-                spectral_radius=ESN_RHO_BASELINE,
-                input_scaling=ESN_INPUT_SCALING,
-                inter_scaling=ESN_INPUT_SCALING,
-                connectivity_recurrent=N_HID,
-                connectivity_input=N_HID,
-                connectivity_inter=N_HID,
-                leaky=ESN_LEAKY,
-                cycle=False,
-                concat=False,
-                linear=False,
-            ).to(device)
-            
-            result = train_and_evaluate(
-                f"ESN 1-layer (trial {trial+1})",
-                model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
-            )
-            result['trial'] = trial + 1
-            result['rho'] = ESN_RHO_BASELINE
-            result['model_type'] = 'ESN'
-            result['architecture'] = '1-layer'
-            baseline_esn_results.append(result)
-            
-            if args.use_test:
-                print(f"  Train: {result['train_acc']:.4f}, Test: {result['test_acc']:.4f}")
-            else:
-                print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}")
-            
-            del model
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-        
-        # Average baseline results
-        baseline_esn_avg = {
-            'name': 'ESN 1-layer (avg)',
-            'model_type': 'ESN',
-            'architecture': '1-layer',
-            'train_acc': np.mean([r['train_acc'] for r in baseline_esn_results]),
-            'valid_acc': np.mean([r['valid_acc'] for r in baseline_esn_results]),
-            'test_acc': np.mean([r['test_acc'] for r in baseline_esn_results]),
-            'train_std': np.std([r['train_acc'] for r in baseline_esn_results]),
-            'valid_std': np.std([r['valid_acc'] for r in baseline_esn_results]),
-            'test_std': np.std([r['test_acc'] for r in baseline_esn_results]),
-            'rho': ESN_RHO_BASELINE,
-        }
-        results.append(baseline_esn_avg)
-        if args.use_test:
-            print(f"\nBaseline ESN Average: Test {baseline_esn_avg['test_acc']*100:.2f}% ± {baseline_esn_avg['test_std']*100:.2f}%")
+        if args.skip_baseline_validation:
+            print("\n  Skipping baseline training (--skip_baseline_validation flag set)")
+            # Create dummy results for consistency
+            baseline_esn_avg = {
+                'name': 'ESN 1-layer (skipped)',
+                'model_type': 'ESN',
+                'architecture': '1-layer',
+                'train_acc': 0.0,
+                'valid_acc': 0.0,
+                'test_acc': 0.0,
+                'train_std': 0.0,
+                'valid_std': 0.0,
+                'test_std': 0.0,
+                'rho': ESN_RHO_BASELINE,
+            }
+            results.append(baseline_esn_avg)
         else:
-            print(f"\nBaseline ESN Average: Valid {baseline_esn_avg['valid_acc']*100:.2f}% ± {baseline_esn_avg['valid_std']*100:.2f}%")
+            baseline_esn_results = []
+            for trial in range(N_TRIALS):
+                print(f"\n--- Trial {trial + 1}/{N_TRIALS} ---")
+                
+                model = DeepReservoir(
+                    input_size=n_inp,
+                    tot_units=N_HID,
+                    spectral_radius=ESN_RHO_BASELINE,
+                    input_scaling=ESN_INPUT_SCALING,
+                    inter_scaling=ESN_INPUT_SCALING,
+                    connectivity_recurrent=N_HID,
+                    connectivity_input=N_HID,
+                    connectivity_inter=N_HID,
+                    leaky=ESN_LEAKY,
+                    cycle=False,
+                    concat=False,
+                    linear=False,
+                ).to(device)
+                
+                result = train_and_evaluate(
+                    f"ESN 1-layer (trial {trial+1})",
+                    model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
+                )
+                result['trial'] = trial + 1
+                result['rho'] = ESN_RHO_BASELINE
+                result['model_type'] = 'ESN'
+                result['architecture'] = '1-layer'
+                baseline_esn_results.append(result)
+                
+                if args.use_test:
+                    print(f"  Train: {result['train_acc']:.4f}, Test: {result['test_acc']:.4f}")
+                else:
+                    print(f"  Train: {result['train_acc']:.4f}, Valid: {result['valid_acc']:.4f}")
+                
+                del model
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            
+            # Average baseline results
+            baseline_esn_avg = {
+                'name': 'ESN 1-layer (avg)',
+                'model_type': 'ESN',
+                'architecture': '1-layer',
+                'train_acc': np.mean([r['train_acc'] for r in baseline_esn_results]),
+                'valid_acc': np.mean([r['valid_acc'] for r in baseline_esn_results]),
+                'test_acc': np.mean([r['test_acc'] for r in baseline_esn_results]),
+                'train_std': np.std([r['train_acc'] for r in baseline_esn_results]),
+                'valid_std': np.std([r['valid_acc'] for r in baseline_esn_results]),
+                'test_std': np.std([r['test_acc'] for r in baseline_esn_results]),
+                'rho': ESN_RHO_BASELINE,
+            }
+            results.append(baseline_esn_avg)
+            if args.use_test:
+                print(f"\nBaseline ESN Average: Test {baseline_esn_avg['test_acc']*100:.2f}% ± {baseline_esn_avg['test_std']*100:.2f}%")
+            else:
+                print(f"\nBaseline ESN Average: Valid {baseline_esn_avg['valid_acc']*100:.2f}% ± {baseline_esn_avg['valid_std']*100:.2f}%")
         
         # N-layer DeepESN with Antisymmetric coupling
         print(f"\n{'='*70}")
@@ -402,73 +419,100 @@ if __name__ == "__main__":
         print(f"Testing dt, epsilon_center, epsilon_range, gamma_center, gamma_range combinations")
         print(f"{'='*70}")
         
-        for dt_val in RON_DT_VALUES:
-            for eps_center in RON_EPSILON_CENTER_VALUES:
-                for eps_range in RON_EPSILON_RANGE_VALUES:
-                    for gamma_center in RON_GAMMA_CENTER_VALUES:
-                        for gamma_range in RON_GAMMA_RANGE_VALUES:
-                            eps_min = eps_center - eps_range / 2.0
-                            eps_max = eps_center + eps_range / 2.0
-                            gamma_min = gamma_center - gamma_range / 2.0
-                            gamma_max = gamma_center + gamma_range / 2.0
-                            
-                            print(f"\n  Testing dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}")
-                            
-                            baseline_ron_results = []
-                            for trial in range(N_TRIALS):
-                                model = RandomizedOscillatorsNetwork(
-                                    n_inp=n_inp,
-                                    n_hid=N_HID,
-                                    dt=dt_val,
-                                    gamma=(gamma_min, gamma_max),
-                                    epsilon=(eps_min, eps_max),
-                                    rho=RON_RHO_BASELINE,
-                                    input_scaling=RON_INPUT_SCALING,
-                                    topology="full",
-                                    device=device,
-                                ).to(device)
+        if args.skip_baseline_validation:
+            print("\n  Skipping baseline training (--skip_baseline_validation flag set)")
+            # Create dummy results for RON baseline configurations
+            for dt_val in RON_DT_VALUES:
+                for eps_center in RON_EPSILON_CENTER_VALUES:
+                    for eps_range in RON_EPSILON_RANGE_VALUES:
+                        for gamma_center in RON_GAMMA_CENTER_VALUES:
+                            for gamma_range in RON_GAMMA_RANGE_VALUES:
+                                baseline_ron_avg = {
+                                    'name': f'RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, skipped)',
+                                    'model_type': 'RON',
+                                    'architecture': '1-layer',
+                                    'train_acc': 0.0,
+                                    'valid_acc': 0.0,
+                                    'test_acc': 0.0,
+                                    'train_std': 0.0,
+                                    'valid_std': 0.0,
+                                    'test_std': 0.0,
+                                    'rho': RON_RHO_BASELINE,
+                                    'dt': dt_val,
+                                    'epsilon_center': eps_center,
+                                    'epsilon_range': eps_range,
+                                    'gamma_center': gamma_center,
+                                    'gamma_range': gamma_range,
+                                }
+                                results.append(baseline_ron_avg)
+        else:
+            for dt_val in RON_DT_VALUES:
+                for eps_center in RON_EPSILON_CENTER_VALUES:
+                    for eps_range in RON_EPSILON_RANGE_VALUES:
+                        for gamma_center in RON_GAMMA_CENTER_VALUES:
+                            for gamma_range in RON_GAMMA_RANGE_VALUES:
+                                eps_min = eps_center - eps_range / 2.0
+                                eps_max = eps_center + eps_range / 2.0
+                                gamma_min = gamma_center - gamma_range / 2.0
+                                gamma_max = gamma_center + gamma_range / 2.0
                                 
-                                result = train_and_evaluate(
-                                    f"RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, trial {trial+1})",
-                                    model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
-                                )
-                                result['trial'] = trial + 1
-                                result['rho'] = RON_RHO_BASELINE
-                                result['dt'] = dt_val
-                                result['epsilon_center'] = eps_center
-                                result['epsilon_range'] = eps_range
-                                result['gamma_center'] = gamma_center
-                                result['gamma_range'] = gamma_range
-                                result['model_type'] = 'RON'
-                                result['architecture'] = '1-layer'
-                                baseline_ron_results.append(result)
+                                print(f"\n  Testing dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}")
                                 
-                                del model
-                                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                            
-                            # Average baseline results
-                            baseline_ron_avg = {
-                                'name': f'RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, avg)',
-                                'model_type': 'RON',
-                                'architecture': '1-layer',
-                                'train_acc': np.mean([r['train_acc'] for r in baseline_ron_results]),
-                                'valid_acc': np.mean([r['valid_acc'] for r in baseline_ron_results]),
-                                'test_acc': np.mean([r['test_acc'] for r in baseline_ron_results]),
-                                'train_std': np.std([r['train_acc'] for r in baseline_ron_results]),
-                                'valid_std': np.std([r['valid_acc'] for r in baseline_ron_results]),
-                                'test_std': np.std([r['test_acc'] for r in baseline_ron_results]),
-                                'rho': RON_RHO_BASELINE,
-                                'dt': dt_val,
-                                'epsilon_center': eps_center,
-                                'epsilon_range': eps_range,
-                                'gamma_center': gamma_center,
-                                'gamma_range': gamma_range,
-                            }
-                            results.append(baseline_ron_avg)
-                            if args.use_test:
-                                print(f"    Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
-                            else:
-                                print(f"    Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
+                                baseline_ron_results = []
+                                for trial in range(N_TRIALS):
+                                    model = RandomizedOscillatorsNetwork(
+                                        n_inp=n_inp,
+                                        n_hid=N_HID,
+                                        dt=dt_val,
+                                        gamma=(gamma_min, gamma_max),
+                                        epsilon=(eps_min, eps_max),
+                                        rho=RON_RHO_BASELINE,
+                                        input_scaling=RON_INPUT_SCALING,
+                                        topology="full",
+                                        device=device,
+                                    ).to(device)
+                                    
+                                    result = train_and_evaluate(
+                                        f"RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, trial {trial+1})",
+                                        model, train_loader, valid_loader, test_loader, device, args.use_test, args.skip_baseline_validation
+                                    )
+                                    result['trial'] = trial + 1
+                                    result['rho'] = RON_RHO_BASELINE
+                                    result['dt'] = dt_val
+                                    result['epsilon_center'] = eps_center
+                                    result['epsilon_range'] = eps_range
+                                    result['gamma_center'] = gamma_center
+                                    result['gamma_range'] = gamma_range
+                                    result['model_type'] = 'RON'
+                                    result['architecture'] = '1-layer'
+                                    baseline_ron_results.append(result)
+                                    
+                                    del model
+                                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                                
+                                # Average baseline results
+                                baseline_ron_avg = {
+                                    'name': f'RON 1-layer (dt={dt_val}, ε_c={eps_center}, ε_r={eps_range}, γ_c={gamma_center}, γ_r={gamma_range}, avg)',
+                                    'model_type': 'RON',
+                                    'architecture': '1-layer',
+                                    'train_acc': np.mean([r['train_acc'] for r in baseline_ron_results]),
+                                    'valid_acc': np.mean([r['valid_acc'] for r in baseline_ron_results]),
+                                    'test_acc': np.mean([r['test_acc'] for r in baseline_ron_results]),
+                                    'train_std': np.std([r['train_acc'] for r in baseline_ron_results]),
+                                    'valid_std': np.std([r['valid_acc'] for r in baseline_ron_results]),
+                                    'test_std': np.std([r['test_acc'] for r in baseline_ron_results]),
+                                    'rho': RON_RHO_BASELINE,
+                                    'dt': dt_val,
+                                    'epsilon_center': eps_center,
+                                    'epsilon_range': eps_range,
+                                    'gamma_center': gamma_center,
+                                    'gamma_range': gamma_range,
+                                }
+                                results.append(baseline_ron_avg)
+                                if args.use_test:
+                                    print(f"    Average: Test {baseline_ron_avg['test_acc']*100:.2f}% ± {baseline_ron_avg['test_std']*100:.2f}%")
+                                else:
+                                    print(f"    Average: Valid {baseline_ron_avg['valid_acc']*100:.2f}% ± {baseline_ron_avg['valid_std']*100:.2f}%")
         
         # N-layer DeepRON with Antisymmetric coupling
         print(f"\n{'='*70}")
