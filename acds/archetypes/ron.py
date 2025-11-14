@@ -269,7 +269,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         reservoir_scaler=0.0,
         sparsity=0.0,
         device="cuda",
-        concat: bool = True,
+        concat: bool = False,
         cycle: bool = False,
         linear: bool = False,
         antisymmetric_coupling: bool = False,
