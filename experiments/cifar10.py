@@ -196,7 +196,7 @@ for trial in range(args.trials):
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
-            cycle=False,
+            cycle=args.cycle,
             linear=False,
             concat=args.concat,
             antisymmetric=args.antisymmetric,
