@@ -348,15 +348,16 @@ if __name__ == "__main__":
                 
                 antisym_esn_results = []
                 for trial in range(N_TRIALS):
+                    units_per_layer = N_HID // args.n_layers
                     model = DeepReservoir(
                         input_size=n_inp,
                         tot_units=N_HID,
                         spectral_radius=rho_val,
                         input_scaling=ESN_INPUT_SCALING,
                         inter_scaling=ESN_INPUT_SCALING,
-                        connectivity_recurrent=N_HID,
-                        connectivity_input=N_HID,
-                        connectivity_inter=N_HID,
+                        connectivity_recurrent=units_per_layer,
+                        connectivity_input=units_per_layer,
+                        connectivity_inter=units_per_layer,
                         leaky=ESN_LEAKY,
                         cycle=False,
                         concat=True,
@@ -410,15 +411,16 @@ if __name__ == "__main__":
             
             cycle_esn_results = []
             for trial in range(N_TRIALS):
+                units_per_layer = N_HID // args.n_layers
                 model = DeepReservoir(
                     input_size=n_inp,
                     tot_units=N_HID,
                     spectral_radius=rho_val,
                     input_scaling=ESN_INPUT_SCALING,
                     inter_scaling=ESN_INPUT_SCALING,
-                    connectivity_recurrent=N_HID,
-                    connectivity_input=N_HID,
-                    connectivity_inter=N_HID,
+                    connectivity_recurrent=units_per_layer,
+                    connectivity_input=units_per_layer,
+                    connectivity_inter=units_per_layer,
                     leaky=ESN_LEAKY,
                     cycle=True,
                     concat=True,
