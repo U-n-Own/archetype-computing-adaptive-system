@@ -20,6 +20,20 @@ from acds.benchmarks import get_mnist_data
 
 from typing import List
 
+
+def count_parameters(model):
+    """Count total parameters and reservoir parameters in the model.
+    
+    Returns:
+        total_params: Total number of parameters in the model
+        reservoir_params: Number of parameters in the reservoir (non-trainable)
+        trainable_params: Number of trainable parameters (should be 0 for RC models)
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    reservoir_params = total_params - trainable_params
+    return total_params, reservoir_params, trainable_params
+
 parser = argparse.ArgumentParser(description="training parameters")
 parser.add_argument("--dataroot", type=str)
 parser.add_argument("--resultroot", type=str)
@@ -215,6 +229,16 @@ for i in range(args.trials):
         ).to(device)
     else:
         raise ValueError("Wrong model choice.")
+
+    # Count and display parameters
+    total_params, reservoir_params, trainable_params = count_parameters(model)
+    print(f"\n{'='*60}")
+    print("MODEL PARAMETERS")
+    print(f"{'='*60}")
+    print(f"Total parameters:      {total_params:,}")
+    print(f"Reservoir parameters:  {reservoir_params:,}")
+    print(f"Trainable parameters:  {trainable_params:,}")
+    print(f"{'='*60}\n")
 
     train_loader, valid_loader, test_loader = get_mnist_data(
         args.dataroot, args.batch, args.batch

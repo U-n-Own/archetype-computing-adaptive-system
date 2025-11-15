@@ -34,6 +34,20 @@ from acds.archetypes import (
 )
 from acds.benchmarks import get_cifar10_data
 
+
+def count_parameters(model):
+    """Count total parameters and reservoir parameters in the model.
+    
+    Returns:
+        total_params: Total number of parameters in the model
+        reservoir_params: Number of parameters in the reservoir (non-trainable)
+        trainable_params: Number of trainable parameters (should be 0 for RC models)
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    reservoir_params = total_params - trainable_params
+    return total_params, reservoir_params, trainable_params
+
 parser = argparse.ArgumentParser(description="CIFAR-10 Sequential Classification")
 parser.add_argument("--dataroot", type=str, help="Path to data directory")
 parser.add_argument("--resultroot", type=str, help="Path to results directory")
@@ -71,8 +85,20 @@ parser.add_argument(
 parser.add_argument("--sparsity", type=float, default=0.0, help="Reservoir sparsity [0, 1)")
 parser.add_argument("--reservoir_scaler", type=float, default=1.0, help="Reservoir scaler")
 parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling strength for antisymmetric inter-layer connections")
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
 args = parser.parse_args()
+
+# Set seed for reproducibility if requested
+try:
+    # import local utility set_seed if available
+    from experiments.utils import set_seed
+    set_seed(args.seed)
+except Exception:
+    import random, numpy as _np, torch as _torch
+    random.seed(args.seed)
+    _np.random.seed(args.seed)
+    _torch.manual_seed(args.seed)
 
 if args.dataroot is None:
     warnings.warn("No dataroot provided. Using current location as default.")
@@ -261,10 +287,20 @@ for trial in range(args.trials):
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
 
+    # Count and display parameters
+    total_params, reservoir_params, trainable_params = count_parameters(model)
+    print(f"\n{'='*60}")
+    print("MODEL PARAMETERS")
+    print(f"{'='*60}")
+    print(f"Total parameters:      {total_params:,}")
+    print(f"Reservoir parameters:  {reservoir_params:,}")
+    print(f"Trainable parameters:  {trainable_params:,}")
+    print(f"{'='*60}\n")
+
     # Load CIFAR-10 data
     print("Loading CIFAR-10 dataset...")
     train_loader, valid_loader, test_loader = get_cifar10_data(
-        args.dataroot, args.batch, args.batch
+        args.dataroot, args.batch, args.batch, seed=args.seed
     )
 
     # Extract reservoir activations and train readout
