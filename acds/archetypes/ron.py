@@ -55,6 +55,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         reservoir_scaler=0.0,
         sparsity=0.0,
         device="cpu",
+        linear: bool = False,
         cycle: bool = False,
         antisymmetric_coupling: bool = False,
         coupling_epsilon: float = 0.1,
@@ -93,6 +94,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         self.antisymmetric_coupling = antisymmetric_coupling
         self.coupling_epsilon = coupling_epsilon
         self.diffusive_matrix = diffusive_gamma * torch.eye(n_hid).to(device)
+        self.linear = linear
         if isinstance(gamma, tuple):
             gamma_min, gamma_max = gamma
             self.gamma = (
@@ -187,19 +189,35 @@ class RandomizedOscillatorsNetwork(nn.Module):
         else:
             antisymmetric_contribution = 0
          
-        hz = hz + self.dt * (
-            torch.tanh(
+        if self.linear:
+            hz = hz + self.dt * (
                 torch.matmul(x, self.x2h.to(dtype=x.dtype)) + 
                 torch.matmul(hy, self.h2h.to(dtype=x.dtype)) + 
                 cycle_part + 
                 antisymmetric_contribution -
                 torch.matmul(hy, self.diffusive_matrix.to(dtype=x.dtype)) + 
-                self.bias.to(dtype=x.dtype))
+                self.bias.to(dtype=x.dtype)
             - self.gamma * hy
             - self.epsilon * hz
         )
+            hy = hy + self.dt * hz
 
-        hy = hy + self.dt * hz
+            return hy, hz
+        else:
+            
+            hz = hz + self.dt * (
+                torch.tanh(
+                    torch.matmul(x, self.x2h.to(dtype=x.dtype)) + 
+                    torch.matmul(hy, self.h2h.to(dtype=x.dtype)) + 
+                    cycle_part + 
+                    antisymmetric_contribution -
+                    torch.matmul(hy, self.diffusive_matrix.to(dtype=x.dtype)) + 
+                    self.bias.to(dtype=x.dtype))
+                - self.gamma * hy
+                - self.epsilon * hz
+            )
+
+            hy = hy + self.dt * hz
         return hy, hz
 
     def forward(self, x: torch.Tensor, first_layer=False, h_last=None) -> Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -310,6 +328,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                 n_inp=n_inp, n_hid=self.layer_units + total_units % n_layers,
                                     input_scaling=input_scaling_others,
                                     dt=dt,
+                                    rho=rho,
                                     gamma=gamma,
                                     epsilon=epsilon,
                                     topology=topology, 
@@ -317,6 +336,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     reservoir_scaler=self.reservoir_scaler,
                                     cycle=self.cycle,
                                     antisymmetric_coupling=antisymmetric_coupling,
+                                    linear = self.linear,
                                     coupling_epsilon=coupling_epsilon,
                                     device=device, 
             )
@@ -340,6 +360,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     sparsity=sparsity, 
                     reservoir_scaler=reservoir_scaler, 
                     cycle=self.cycle,
+                    linear=self.linear,
                     antisymmetric_coupling=antisymmetric_coupling,
                     coupling_epsilon=coupling_epsilon,
                     device=device, 
