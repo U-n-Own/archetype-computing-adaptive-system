@@ -161,6 +161,7 @@ for i in range(args.trials):
         model = DeepReservoir(
             input_size=n_inp,
             tot_units=args.n_hid,
+            n_layers=args.n_layers,
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,

@@ -30,8 +30,7 @@ class ReservoirCell(torch.nn.Module):
     For antisymmetric coupling mode, the equation becomes:
     
     .. math::
-        y_l^{(t)} = \\tanh(W_{in}^{(l)} u^{(t)} + W_{rec}^{(l)} h_l^{(t-1)} + 
-        W_{proj} h_L^{(t-1)} + \\epsilon (C_{l-1} h_{l-1}^{(t-1)} - C_l^T h_{l+1}^{(t-1)}))
+        y_l^{(t)} = \\tanh(W_{in}^{(l)} u^{(t)} + W_{rec}^{(l)} h_l^{(t-1)} + \\epsilon (C_{l-1} h_{l-1}^{(t-1)} - C_l^T h_{l+1}^{(t-1)}))
 
     The implementation is derivated from the one in https://github.com/gallicch/DeepRC-TF/blob/master/DeepRC.py
 

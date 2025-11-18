@@ -41,121 +41,6 @@ def count_parameters(model):
     return total_params, reservoir_params, trainable_params
 
 
-def compute_spectral_properties(matrix):
-    """Compute spectral radius and spectral norm of a matrix."""
-    eigenvals = np.linalg.eigvals(matrix)
-    spectral_radius = np.max(np.abs(eigenvals))
-    spectral_norm = np.linalg.norm(matrix, ord=2)  # Largest singular value
-    return spectral_radius, spectral_norm, eigenvals
-
-
-def construct_jacobian(model, device):
-    """Construct block matrix form of the Jacobian of the reservoir network.
-    
-    For cycle networks with n layers, the Jacobian structure is:
-    [ W_rec_0     0         0       ...  W_proj_0   ]  ← layer 0 depends on layer n-1
-    [ W_proj_1    W_rec_1   0       ...  0          ]  ← layer 1 depends on layer 0
-    [ 0           W_proj_2  W_rec_2 ...  0          ]  ← layer 2 depends on layer 1
-    ...
-    [ 0           0         0       ...  W_rec_{n-1}]  ← layer n-1 depends on layer n-2
-    
-    where:
-    - W_rec_i: recurrent weight matrices of each layer (diagonal blocks)
-    - W_proj_i: projection weights from layer i-1 to layer i (sub-diagonal)
-    - W_proj_0: projection from layer n-1 to layer 0 (top-right, closing the ring)
-    """
-    jacobian_blocks = []
-    
-    # Determine which reservoir attribute to use
-    reservoir_layers = None
-    if hasattr(model, 'reservoir'):
-        reservoir_layers = model.reservoir
-    elif hasattr(model, 'ron_reservoir'):
-        reservoir_layers = model.ron_reservoir
-    
-    if reservoir_layers is None:
-        return None
-    
-    # Extract weight matrices from each layer
-    for layer_idx in range(model.n_layers):
-        layer = reservoir_layers[layer_idx]
-        
-        # For ESN (DeepReservoir)
-        if hasattr(layer, 'net') and hasattr(layer.net, 'recurrent_kernel'):
-            W_rec = layer.net.recurrent_kernel.detach().cpu().numpy()
-            jacobian_blocks.append(W_rec)
-        # For RON (DeepRandomizedOscillatorsNetwork)
-        elif hasattr(layer, 'h2h'):
-            W_rec = layer.h2h.detach().cpu().numpy()
-            jacobian_blocks.append(W_rec)
-    
-    if not jacobian_blocks:
-        return None
-    
-    # For single layer, return the recurrent matrix
-    if model.n_layers == 1:
-        return jacobian_blocks[0]
-    
-    # For multi-layer cyclic networks, create the full Jacobian
-    total_size = sum(W.shape[0] for W in jacobian_blocks)
-    total_jacobian = np.zeros((total_size, total_size))
-    
-    # Fill block diagonal with recurrent weights
-    row_start = 0
-    for i, W in enumerate(jacobian_blocks):
-        row_end = row_start + W.shape[0]
-        col_start = row_start
-        col_end = col_start + W.shape[1]
-        total_jacobian[row_start:row_end, col_start:col_end] = W
-        row_start = row_end
-    
-    # Add inter-layer connections for cyclic topology
-    if hasattr(model, 'cycle') and model.cycle and model.n_layers > 1:
-        for layer_idx in range(model.n_layers):
-            prev_layer_idx = (layer_idx - 1) % model.n_layers
-            layer = reservoir_layers[layer_idx]
-            
-            # For ESN
-            if hasattr(layer, 'net') and hasattr(layer.net, 'projection_kernel') and layer.net.projection_kernel is not None:
-                W_proj = layer.net.projection_kernel.detach().cpu().numpy()
-                
-                curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
-                curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
-                prev_start = sum(jacobian_blocks[j].shape[0] for j in range(prev_layer_idx))
-                prev_end = prev_start + jacobian_blocks[prev_layer_idx].shape[0]
-                
-                if W_proj.shape[0] == (curr_end - curr_start) and W_proj.shape[1] == (prev_end - prev_start):
-                    total_jacobian[curr_start:curr_end, prev_start:prev_end] = W_proj
-            
-            # For RON
-            elif hasattr(layer, 'cycle_kernel') and layer.cycle_kernel is not None:
-                W_cycle = layer.cycle_kernel.detach().cpu().numpy()
-                
-                curr_start = sum(jacobian_blocks[j].shape[0] for j in range(layer_idx))
-                curr_end = curr_start + jacobian_blocks[layer_idx].shape[0]
-                prev_start = sum(jacobian_blocks[j].shape[0] for j in range(prev_layer_idx))
-                prev_end = prev_start + jacobian_blocks[prev_layer_idx].shape[0]
-                
-                if W_cycle.shape[0] == (curr_end - curr_start) and W_cycle.shape[1] == (prev_end - prev_start):
-                    total_jacobian[curr_start:curr_end, prev_start:prev_end] = W_cycle
-    
-    return total_jacobian
-
-
-def compute_effective_jacobian(jacobian_matrix, leaky_rate):
-    """Compute the effective Jacobian with leaky integration.
-    
-    For leaky integration: h(t) = (1-α)*h(t-1) + α*f(W*h(t-1) + input)
-    The effective Jacobian is: J_eff = (1-α)*I + α*W
-    """
-    if jacobian_matrix is None:
-        return None
-    
-    I = np.eye(jacobian_matrix.shape[0])
-    J_eff = (1 - leaky_rate) * I + leaky_rate * jacobian_matrix
-    return J_eff
-
-
 parser = argparse.ArgumentParser(description="psMNIST Sequential Classification")
 parser.add_argument("--dataroot", type=str, help="Path to data directory")
 parser.add_argument("--resultroot", type=str, help="Path to results directory")
@@ -260,6 +145,7 @@ for trial in range(args.trials):
             tot_units=args.n_hid,
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
+            n_layers=args.n_layers,
             inter_scaling=args.inp_scaling,
             connectivity_recurrent=units_per_layer,
             connectivity_input=units_per_layer,
@@ -273,14 +159,13 @@ for trial in range(args.trials):
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.diffusive_gamma,
-            args.rho,
-            args.inp_scaling,
+            n_inp=n_inp,
+            n_hid=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            input_scaling=args.inp_scaling,
+            rho=args.rho,
             topology=args.topology,
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
@@ -325,8 +210,6 @@ for trial in range(args.trials):
             coupling_epsilon=args.coupling_epsilon,
             cycle=args.cycle,
             concat=args.concat,
-            connectivity_input=args.n_hid // args.n_layers,
-            connectivity_inter=args.n_hid // args.n_layers,
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
@@ -340,70 +223,6 @@ for trial in range(args.trials):
     print(f"Reservoir parameters:  {reservoir_params:,}")
     print(f"Trainable parameters:  {trainable_params:,}")
     print(f"{'='*60}")
-
-    # Compute spectral properties
-    print("\n" + "="*60)
-    print("SPECTRAL ANALYSIS")
-    print("="*60)
-    
-    if hasattr(model, 'n_layers'):
-        W_tot = construct_jacobian(model, device)
-        
-        if W_tot is not None:
-            # Compute spectral properties of W_tot (weight matrix)
-            rho_W, norm_W, _ = compute_spectral_properties(W_tot)
-            
-            # Compute effective Jacobian with leaky integration
-            J_eff = compute_effective_jacobian(W_tot, args.leaky)
-            rho_J, norm_J, _ = compute_spectral_properties(J_eff)
-            
-            print(f"\nConfiguration:")
-            print(f"  Model: {'ESN' if args.esn else 'DeepRON' if args.deepron else 'RON'}")
-            print(f"  Layers: {model.n_layers}")
-            print(f"  Total units: {args.n_hid}")
-            print(f"  Units per layer: {args.n_hid // model.n_layers}")
-            print(f"  Target spectral radius: {args.rho}")
-            print(f"  Leaky rate: {args.leaky}")
-            print(f"  Cycle topology: {args.cycle if hasattr(args, 'cycle') else 'N/A'}")
-            
-            print(f"\nW_tot (Recurrent Weight Matrix):")
-            print(f"  Matrix shape: {W_tot.shape}")
-            print(f"  Spectral radius ρ(W_tot): {rho_W:.6f}")
-            print(f"  Spectral norm ||W_tot||₂: {norm_W:.6f}")
-            print(f"  Status: {'✓ STABLE' if rho_W < 1.0 else '✗ UNSTABLE'} (ρ < 1)")
-            
-            print(f"\nJ_eff (Effective Jacobian with leaky={args.leaky}):")
-            print(f"  J_eff = (1-α)*I + α*W_tot, where α = {args.leaky}")
-            print(f"  Spectral radius ρ(J_eff): {rho_J:.6f}")
-            print(f"  Spectral norm ||J_eff||₂: {norm_J:.6f}")
-            print(f"  Status: {'✓ STABLE' if rho_J < 1.0 else '⚠ POTENTIALLY UNSTABLE'} (ρ < 1)")
-            
-            print(f"\nSpectral Radius Comparison:")
-            print(f"  Target ρ (initialization): {args.rho:.6f}")
-            print(f"  Actual ρ(W_tot):            {rho_W:.6f} (diff: {rho_W - args.rho:+.6f})")
-            print(f"  Effective ρ(J_eff):         {rho_J:.6f} (diff: {rho_J - args.rho:+.6f})")
-            
-            if args.leaky < 1.0:
-                print(f"\n💡 Insight:")
-                print(f"  With leaky integration (α={args.leaky}), the effective dynamics")
-                print(f"  are governed by J_eff = (1-α)*I + α*W_tot")
-                print(f"  This can increase the spectral radius compared to W_tot alone.")
-                print(f"  The eigenvalue transformation is: λ_J = (1-α) + α*λ_W")
-            
-            # Save spectral properties to result file
-            spectral_info = (
-                f"\nSpectral Properties (Trial {trial + 1}):\n"
-                f"  ρ(W_tot): {rho_W:.6f}, ||W_tot||₂: {norm_W:.6f}\n"
-                f"  ρ(J_eff): {rho_J:.6f}, ||J_eff||₂: {norm_J:.6f}\n"
-            )
-        else:
-            print("  Could not construct Jacobian matrix for this model.")
-            spectral_info = "  Spectral analysis: N/A\n"
-    else:
-        print("  Model does not support multi-layer spectral analysis.")
-        spectral_info = "  Spectral analysis: N/A\n"
-    
-    print("="*60)
 
     # Load psMNIST data
     print("\nLoading permuted sequential MNIST dataset...")
