@@ -60,7 +60,7 @@ def train_smnist_ray(config):
         antisymmetric_flag = (arch == "antisymmetric")
         
     # -------------------------------------------------------
-    # Build model exactly like smnist.py
+    # Build model 
     # -------------------------------------------------------
     if config["model"] == "esn":
         units_per_layer = config["n_hid"] // config["n_layers"]
@@ -129,7 +129,7 @@ def train_smnist_ray(config):
     )
 
     # -------------------------------------------------------
-    # Train reservoir → collect activations → logistic regression
+    # Train reservoir
     # -------------------------------------------------------
     activations = []
     ys = []
@@ -151,7 +151,7 @@ def train_smnist_ray(config):
     clf = LogisticRegression(max_iter=1000).fit(activations, ys)
 
     # -------------------------------------------------------
-    # Validation accuracy → what we optimize
+    # Validation accuracy
     # -------------------------------------------------------
     valid_acc = evaluate(model, valid_loader, clf, scaler, device)
     
@@ -165,7 +165,11 @@ def train_smnist_ray(config):
             log_record[k] = v.item()
         if isinstance(v, np.generic):
             log_record[k] = np.asscalar(v)
-
+    
+    total_params, reservoir_params, trainable_params = count_parameters(model)
+    log_record["reservoir_params"] = reservoir_params
+    # -------------------------------------------------------
+    
     # Write JSON line for this trial
     os.makedirs(config["logdir"], exist_ok=True)
     log_path = os.path.join(config["logdir"], "trial_log.jsonl")
@@ -174,12 +178,12 @@ def train_smnist_ray(config):
         f.write(json.dumps(log_record) + "\n")
 
     # -------------------------------------------------------
-    # Report to Ray Tune (must come after logging)
+    # Report to Ray Tune 
     # -------------------------------------------------------
     tune.report(valid_accuracy=valid_acc)
 
 # -----------------------------------------------------------
-# Evaluate function identical to smnist.py
+# Evaluate function
 # -----------------------------------------------------------
 @torch.no_grad()
 def evaluate(model, data_loader, clf, scaler, device):
@@ -201,41 +205,42 @@ def evaluate(model, data_loader, clf, scaler, device):
     return clf.score(activations, ys)
 
 
-# -----------------------------------------------------------
-# MAIN ENTRY POINT
-# -----------------------------------------------------------
 if __name__ == "__main__":
 
-    # ----------------------------
-    # YOU define the search space
-    # ----------------------------
-    search_space = {
-        "arch": tune.choice(["cycle", "antisymmetric", "baseline"]),
-        "model": "esn",
-        "n_hid": tune.choice([500]),
-        "n_layers": tune.choice([1, 5, 10]),
-        "rho": tune.uniform(0.999,9, 90),
-        "inp_scaling": tune.uniform(0.1, 1),
-        "leaky": tune.loguniform(0.001, 1),
-        "coupling_epsilon": tune.uniform(20),
-        "concat": True,
-        "batch": 1000,
-        "seed": 42,
-        "dataroot": "./data",
-    }
+    architectures = ["cycle", "antisymmetric", "baseline"]
+    
+    for arch in architectures:
+        print(f"\n{'='*60}")
+        print(f"Running Bayesian Search for architecture: {arch}")
+        print(f"{'='*60}\n")
+        
+        search_space = {
+            "model": "esn",
+            "n_hid": tune.choice([500]),
+            "n_layers": tune.choice([1, 5, 10]),
+            "rho": tune.uniform(0.999,9, 90),
+            "inp_scaling": tune.uniform(0.1, 1),
+            "leaky": tune.loguniform(0.001, 1),
+            "coupling_epsilon": tune.uniform(20),
+            "concat": True,
+            "batch": 1000,
+            "seed": 42,
+            "dataroot": "./data",
+            "logdir": f"./logs/bayesopt_esn_{arch}",
+        }
 
-    algo = BayesOptSearch(metric="valid_accuracy", mode="max")
+        algo = BayesOptSearch(metric="valid_accuracy", mode="max")
 
-    tuner = tune.Tuner(
-        train_smnist_ray,
-        tune_config=tune.TuneConfig(
-            search_alg=algo,
-            num_samples=200,  # how many trials you want
-        ),
-        param_space=search_space,
-    )
+        tuner = tune.Tuner(
+            train_smnist_ray,
+            tune_config=tune.TuneConfig(
+                search_alg=algo,
+                num_samples=100,  # how many trials you want
+            ),
+            param_space=search_space,
+        )
 
-    results = tuner.fit()
-    print("Best result:", results.get_best_result(metric="valid_accuracy", mode="max"))
+        results = tuner.fit()
+        print("Best result:", results.get_best_result(metric="valid_accuracy", mode="max"))
 
 
