@@ -4,9 +4,9 @@ import torch
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 import json
-
+import ray 
 from ray import tune
-from ray.tune.search.bayesopt import BayesOptSearch
+from ray.tune.search.optuna import OptunaSearch
 from ray.tune.schedulers import ASHAScheduler
 
 from experiments.utils import set_seed
@@ -18,18 +18,15 @@ from acds.archetypes import (
     DeepRandomizedOscillatorsNetwork,
 )
 
-# -----------------------------------------------------------
-# Helper: identical to your smnist “count_parameters”
-# -----------------------------------------------------------
 def count_parameters(model):
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     reservoir_params = total_params - trainable_params
     return total_params, reservoir_params, trainable_params
 
-
+#
 # -----------------------------------------------------------
-# Ray Tune trainable function (this runs one trial)
+# Ray Tune trainable function 
 # -----------------------------------------------------------
 def train_smnist_ray(config):
 
@@ -120,15 +117,6 @@ def train_smnist_ray(config):
         raise ValueError("Unknown model type.")
 
     # -------------------------------------------------------
-    # Dataset
-    # -------------------------------------------------------
-    train_loader, valid_loader, test_loader = get_mnist_data(
-        config["dataroot"],
-        config["batch"],
-        config["batch"],
-    )
-
-    # -------------------------------------------------------
     # Train reservoir
     # -------------------------------------------------------
     activations = []
@@ -180,7 +168,7 @@ def train_smnist_ray(config):
     # -------------------------------------------------------
     # Report to Ray Tune 
     # -------------------------------------------------------
-    tune.report(valid_accuracy=valid_acc)
+    tune.report({"valid_accuracy": valid_acc})
 
 # -----------------------------------------------------------
 # Evaluate function
@@ -207,6 +195,20 @@ def evaluate(model, data_loader, clf, scaler, device):
 
 if __name__ == "__main__":
 
+
+    # -------------------------------------------------------
+    # Dataset
+    # -------------------------------------------------------
+    print("Loading MNIST data...")
+    train_loader, valid_loader, test_loader = get_mnist_data(
+        "./data",
+        1000,
+        1000,
+    )
+    print("Data loaded!\n")
+
+    ray.init(ignore_reinit_error=True)
+    
     architectures = ["cycle", "antisymmetric", "baseline"]
     
     for arch in architectures:
@@ -216,31 +218,35 @@ if __name__ == "__main__":
         
         search_space = {
             "model": "esn",
-            "n_hid": tune.choice([500]),
+            "arch": arch,
+            "n_hid": 500,
             "n_layers": tune.choice([1, 5, 10]),
             "rho": tune.loguniform(0.999, 90),
             "inp_scaling": tune.loguniform(0.1, 1),
             "leaky": tune.loguniform(0.001, 1),
-            "coupling_epsilon": tune.uniform(20, 20),
+            "coupling_epsilon": 20.0,
             "concat": True,
-            "batch": 1000,
+            "batch": 500,
             "seed": 42,
             "dataroot": "./data",
             "logdir": f"./logs/bayesopt_esn_{arch}",
         }
 
-        algo = BayesOptSearch(metric="valid_accuracy", mode="max")
+        algo = OptunaSearch(metric="valid_accuracy", mode="max", seed = 42)
 
         tuner = tune.Tuner(
-            train_smnist_ray,
+            tune.with_resources(train_smnist_ray, {"cpu": 0, "gpu": 1}),
             tune_config=tune.TuneConfig(
                 search_alg=algo,
-                num_samples=100,  # how many trials you want
+                #scheduler=ASHAScheduler(metric="valid_accuracy", mode="max"),
+                num_samples=100,
+                max_concurrent_trials=1,
             ),
             param_space=search_space,
         )
 
         results = tuner.fit()
-        print("Best result:", results.get_best_result(metric="valid_accuracy", mode="max"))
-
-
+        best = results.get_best_result(metric="valid_accuracy", mode="max")
+        print(f"\nBest result for {arch}:", best.config, "Acc:", best.metrics["valid_accuracy"])
+    
+    ray.shutdown()
