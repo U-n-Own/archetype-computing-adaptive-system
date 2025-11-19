@@ -221,7 +221,7 @@ if __name__ == "__main__":
             "rho": tune.loguniform(0.999, 90),
             "inp_scaling": tune.loguniform(0.1, 1),
             "leaky": tune.loguniform(0.001, 1),
-            "coupling_epsilon": tune.uniform(20),
+            "coupling_epsilon": tune.uniform(20, 20),
             "concat": True,
             "batch": 1000,
             "seed": 42,
