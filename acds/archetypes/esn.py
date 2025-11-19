@@ -119,7 +119,12 @@ class ReservoirCell(torch.nn.Module):
                     self.recurrent_kernel = nn.Parameter(torch.zeros(self.units, self.units), requires_grad=False)
                 
                 # Ring projection from previous layer in cycle
-                self.projection_kernel = nn.Parameter(torch.eye(self.units) * spectral_radius, requires_grad=False)
+                #self.projection_kernel = nn.Parameter(torch.eye(self.units) * spectral_radius, requires_grad=False)
+                # Init the cycle projection as W_rec
+                self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
+                # then scale projection kernel by spectral radius
+                self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
+                self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
         else:
             # No cycle mode 
             self.kernel = (
@@ -502,7 +507,6 @@ class DeepReservoir(torch.nn.Module):
                     # Get previous layer's output for ring connection
                     if i == 0:
                         # First layer gets feedback from last layer (closing the ring)
-                        # For single layer, use its own previous state (self-feedback)
                         if len(self.reservoir) > 1:
                             prev_layer_output = layer_hidden_states[-1]
                         else:
