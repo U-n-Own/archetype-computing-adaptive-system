@@ -511,7 +511,9 @@ class DeepReservoir(torch.nn.Module):
                             prev_layer_output = layer_hidden_states[-1]
                         else:
                             # Single layer: self-feedback from its own previous timestep
-                            prev_layer_output = layer_hidden_states[0]
+                            #prev_layer_output = layer_hidden_states[0]
+                            # If this is not none: For 1 layer case we get twice the same state
+                            prev_layer_output = None
                     else:
                         prev_layer_output = layer_hidden_states[i-1]
                     
