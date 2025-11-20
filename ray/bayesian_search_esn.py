@@ -58,7 +58,7 @@ def objective(trial, arch, model_type="esn"):
     config = {
         "model": model_type,
         "arch": arch,
-        "n_hid": 500,
+        "n_hid": 317,
         "n_layers": trial.suggest_categorical("n_layers", [1, 5, 10]),
         "rho": trial.suggest_float("rho", 0.999, 90, log=True),
         "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
@@ -158,7 +158,8 @@ def objective(trial, arch, model_type="esn"):
 # -------------------------------------------------------------
 if __name__ == "__main__":
 
-    architectures = ["cycle", "antisymmetric", "baseline"]
+    #architectures = ["cycle", "antisymmetric", "baseline"]
+    architectures = ["baseline"]
 
     for arch in architectures:
         print(f"\n============================")
