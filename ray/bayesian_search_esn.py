@@ -1,13 +1,11 @@
 import os
+import json
+import time
 import numpy as np
 import torch
+import optuna
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
-import json
-import ray 
-from ray import tune
-from ray.tune.search.optuna import OptunaSearch
-from ray.tune.schedulers import ASHAScheduler
 
 from experiments.utils import set_seed
 from acds.benchmarks import get_mnist_data
@@ -18,51 +16,86 @@ from acds.archetypes import (
     DeepRandomizedOscillatorsNetwork,
 )
 
+# -------------------------------------------------------------
+# Helper: Count Params
+# -------------------------------------------------------------
 def count_parameters(model):
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     reservoir_params = total_params - trainable_params
     return total_params, reservoir_params, trainable_params
 
-#
-# -----------------------------------------------------------
-# Ray Tune trainable function 
-# -----------------------------------------------------------
-def train_smnist_ray(config):
 
-    # Reproducibility
-    set_seed(config["seed"])
+# -------------------------------------------------------------
+# Evaluate
+# -------------------------------------------------------------
+@torch.no_grad()
+def evaluate(model, data_loader, clf, scaler, device):
+    activations = []
+    ys = []
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    n_inp = 1
-    n_out = 10
+    for images, labels in data_loader:
+        images = images.to(device)
+        images = images.view(images.shape[0], -1).unsqueeze(-1)
+        states, _ = model(images)
+        output = states[:, -1, :]
+        activations.append(output.cpu())
+        ys.append(labels)
 
-    arch = config["arch"]
-    n_layers = config["n_layers"]
-    
-    # --- Rule 1: baseline forces 1 layer ---
+    activations = torch.cat(activations, dim=0).numpy()
+    activations = scaler.transform(activations)
+    ys = torch.cat(ys, dim=0).numpy()
+
+    return clf.score(activations, ys)
+
+
+# -------------------------------------------------------------
+# Objective Function for Optuna
+# -------------------------------------------------------------
+def objective(trial, arch, model_type="esn"):
+
+    # ------------------ Hyperparameter Sampling ------------------
+    config = {
+        "model": model_type,
+        "arch": arch,
+        "n_hid": 500,
+        "n_layers": trial.suggest_categorical("n_layers", [1, 5, 10]),
+        "rho": trial.suggest_float("rho", 0.999, 90, log=True),
+        "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
+        "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
+        "coupling_epsilon": 20.0,
+        "concat": True,
+        "batch": 256,
+        "seed": 42,
+        "dataroot": "./data",
+        "logdir": f"./logs/bayesopt_esn_{arch}",
+    }
+
+    # ------------------ Rule logic keeping same behaviour -------------
     if arch == "baseline":
-        n_layers = 1  # override
+        config["n_layers"] = 1
         cycle_flag = False
         antisymmetric_flag = False
-
-    # --- Rule 2: if user tries multilayer baseline, force it to 1 ---
-    elif n_layers == 1:
+    elif config["n_layers"] == 1:
         cycle_flag = False
         antisymmetric_flag = False
-
-    # --- Rule 3: multilayer non-baseline architectures ---
     else:
         cycle_flag = (arch == "cycle")
         antisymmetric_flag = (arch == "antisymmetric")
-        
-    # -------------------------------------------------------
-    # Build model 
-    # -------------------------------------------------------
+
+    # ------------------ Load Data ------------------
+    set_seed(config["seed"])
+    train_loader, valid_loader, test_loader = get_mnist_data(
+        root=config["dataroot"], bs_train=config["batch"], bs_test=1000
+    )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # ------------------ Build Model ------------------
     if config["model"] == "esn":
         units_per_layer = config["n_hid"] // config["n_layers"]
         model = DeepReservoir(
-            input_size=n_inp,
+            input_size=1,
             tot_units=config["n_hid"],
             n_layers=config["n_layers"],
             spectral_radius=config["rho"],
@@ -79,175 +112,68 @@ def train_smnist_ray(config):
             antisymmetric=antisymmetric_flag,
         ).to(device)
 
-    elif config["model"] == "ron":
-        model = RandomizedOscillatorsNetwork(
-            n_inp=n_inp,
-            n_hid=config["n_hid"],
-            dt=config["dt"],
-            gamma=config["gamma"],
-            epsilon=config["epsilon"],
-            diffusive_gamma=config["diffusive_gamma"],
-            rho=config["rho"],
-            input_scaling=config["inp_scaling"],
-            topology=config["topology"],
-            sparsity=config["sparsity"],
-            reservoir_scaler=config["reservoir_scaler"],
-            device=device,
-        ).to(device)
-
-    elif config["model"] == "deepron":
-        model = DeepRandomizedOscillatorsNetwork(
-            n_inp=n_inp,
-            total_units=config["n_hid"],
-            dt=config["dt"],
-            gamma=config["gamma"],
-            epsilon=config["epsilon"],
-            n_layers=config["n_layers"],
-            rho=config["rho"],
-            input_scaling=config["inp_scaling"],
-            inter_scaling=config["inp_scaling"],
-            device=device,
-            antisymmetric_coupling=config["antisymmetric"],
-            coupling_epsilon=config["coupling_epsilon"],
-            concat=config["concat"],
-            cycle=config["cycle"]
-        ).to(device)
-
     else:
-        raise ValueError("Unknown model type.")
+        raise ValueError("Model type not supported here.")
 
-    # -------------------------------------------------------
-    # Train reservoir
-    # -------------------------------------------------------
+    # ------------------ Reservoir Forward Pass ------------------
+    t0 = time.time()
     activations = []
-    ys = []
+    labels_all = []
 
     for images, labels in train_loader:
         images = images.to(device)
         images = images.view(images.shape[0], -1).unsqueeze(-1)
         states, _ = model(images)
-        output = states[:, -1, :]
-        activations.append(output.cpu())
-        ys.append(labels)
+        out = states[:, -1, :]
+        activations.append(out.cpu())
+        labels_all.append(labels)
 
-    activations = torch.cat(activations, dim=0).numpy()
-    ys = torch.cat(ys, dim=0).numpy()
+    activations = torch.cat(activations).numpy()
+    y = torch.cat(labels_all).numpy()
+    print(f"[PROFILE] Forward: {time.time()-t0:.2f}s")
 
+    # ---------------- LogReg ------------------
     scaler = preprocessing.StandardScaler().fit(activations)
-    activations = scaler.transform(activations)
+    X = scaler.transform(activations)
 
-    clf = LogisticRegression(max_iter=1000).fit(activations, ys)
+    clf = LogisticRegression(max_iter=1000).fit(X, y)
 
-    # -------------------------------------------------------
-    # Validation accuracy
-    # -------------------------------------------------------
+    # ---------------- Validation ------------------
     valid_acc = evaluate(model, valid_loader, clf, scaler, device)
-    
-    # Build flat record
-    log_record = {**config}
-    log_record["valid_accuracy"] = float(valid_acc)
 
-    # Clean any numpy / tensor types
-    for k, v in list(log_record.items()):
-        if hasattr(v, "item"):
-            log_record[k] = v.item()
-        if isinstance(v, np.generic):
-            log_record[k] = np.asscalar(v)
-    
-    total_params, reservoir_params, trainable_params = count_parameters(model)
-    log_record["reservoir_params"] = reservoir_params
-    # -------------------------------------------------------
-    
-    # Write JSON line for this trial
+    # ---------------- Log to JSONL ------------------
     os.makedirs(config["logdir"], exist_ok=True)
-    log_path = os.path.join(config["logdir"], "trial_log.jsonl")
-
-    with open(log_path, "a") as f:
+    with open(os.path.join(config["logdir"], "trial_log.jsonl"), "a") as f:
+        log_record = dict(config)
+        log_record["valid_accuracy"] = float(valid_acc)
+        _, reservoir_params, _ = count_parameters(model)
+        log_record["reservoir_params"] = reservoir_params
         f.write(json.dumps(log_record) + "\n")
 
-    # -------------------------------------------------------
-    # Report to Ray Tune 
-    # -------------------------------------------------------
-    tune.report({"valid_accuracy": valid_acc})
-
-# -----------------------------------------------------------
-# Evaluate function
-# -----------------------------------------------------------
-@torch.no_grad()
-def evaluate(model, data_loader, clf, scaler, device):
-    activations = []
-    ys = []
-
-    for images, labels in data_loader:
-        images = images.to(device)
-        images = images.view(images.shape[0], -1).unsqueeze(-1)
-        states, _ = model(images)
-        output = states[:, -1, :]
-        activations.append(output.cpu())
-        ys.append(labels)
-
-    activations = torch.cat(activations, dim=0).numpy()
-    activations = scaler.transform(activations)
-
-    ys = torch.cat(ys, dim=0).numpy()
-    return clf.score(activations, ys)
+    return valid_acc
 
 
+# -------------------------------------------------------------
+# MAIN LOOP (Replaces Ray)
+# -------------------------------------------------------------
 if __name__ == "__main__":
 
-
-    # -------------------------------------------------------
-    # Dataset
-    # -------------------------------------------------------
-    print("Loading MNIST data...")
-    batch_size = 1000
-    train_loader, valid_loader, test_loader = get_mnist_data(
-        "./data",
-        bs_train=batch_size,
-        bs_test=batch_size,
-    )
-    print("Data loaded!\n")
-
-    ray.init(ignore_reinit_error=True)
-    
     architectures = ["cycle", "antisymmetric", "baseline"]
-    
+
     for arch in architectures:
-        print(f"\n{'='*60}")
-        print(f"Running Bayesian Search for architecture: {arch}")
-        print(f"{'='*60}\n")
-        
-        search_space = {
-            "model": "esn",
-            "arch": arch,
-            "n_hid": 500,
-            "n_layers": tune.choice([1, 5, 10]),
-            "rho": tune.loguniform(0.999, 90),
-            "inp_scaling": tune.loguniform(0.1, 1),
-            "leaky": tune.loguniform(0.001, 1),
-            "coupling_epsilon": 20.0,
-            "concat": True,
-            "batch": batch_size,
-            "seed": 42,
-            "dataroot": "./data",
-            "logdir": f"./logs/bayesopt_esn_{arch}",
-        }
+        print(f"\n============================")
+        print(f" Optimizing architecture: {arch}")
+        print(f"============================\n")
 
-        algo = OptunaSearch(metric="valid_accuracy", mode="max", seed = 42)
-
-        tuner = tune.Tuner(
-            tune.with_resources(train_smnist_ray, {"cpu": 0, "gpu": 1}),
-            tune_config=tune.TuneConfig(
-                search_alg=algo,
-                #scheduler=ASHAScheduler(metric="valid_accuracy", mode="max"),
-                num_samples=100,
-                max_concurrent_trials=1,
-            ),
-            param_space=search_space,
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=42), 
         )
 
-        results = tuner.fit()
-        best = results.get_best_result(metric="valid_accuracy", mode="max")
-        print(f"\nBest result for {arch}:", best.config, "Acc:", best.metrics["valid_accuracy"])
-    
-    ray.shutdown()
+        study.optimize(
+            lambda trial: objective(trial, arch, model_type="esn"),
+            n_trials=50,
+            show_progress_bar=True,
+        )
+
+        print("\nBest:", study.best_params, "Acc:", study.best_value)
