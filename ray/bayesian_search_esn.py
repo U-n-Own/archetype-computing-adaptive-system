@@ -200,10 +200,11 @@ if __name__ == "__main__":
     # Dataset
     # -------------------------------------------------------
     print("Loading MNIST data...")
+    batch_size = 1000
     train_loader, valid_loader, test_loader = get_mnist_data(
         "./data",
-        1000,
-        1000,
+        bs_train=batch_size,
+        bs_test=batch_size,
     )
     print("Data loaded!\n")
 
@@ -226,7 +227,7 @@ if __name__ == "__main__":
             "leaky": tune.loguniform(0.001, 1),
             "coupling_epsilon": 20.0,
             "concat": True,
-            "batch": 500,
+            "batch": batch_size,
             "seed": 42,
             "dataroot": "./data",
             "logdir": f"./logs/bayesopt_esn_{arch}",
