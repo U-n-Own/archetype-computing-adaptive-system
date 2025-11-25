@@ -138,12 +138,12 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         "arch": arch,
         "n_hid": n_hid,
         "n_layers": trial.suggest_categorical("n_layers", n_layers_opts),
-        "rho": trial.suggest_float("rho", 0.1, 10, log=True), # Adjusted range usually better for DeepESN
+        "rho": trial.suggest_float("rho", 0.9, 9, log=True), # Adjusted range usually better for DeepESN
         "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
         "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
         "coupling_epsilon": 20.0, # Consider optimizing this too if antisym
         "concat": True,
-        "batch": 256,
+        "batch": 512,
         "seed": 42,
         "dataroot": "./data",
         "logdir": f"./logs/bayesopt_{dataset_name}_{arch}",
@@ -229,24 +229,26 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     return valid_acc
 
 if __name__ == "__main__":
-    multi = True 
+    multi = False 
     # Define which dataset you want to run here
-    CURRENT_DATASET = "mnist" # Options: "mnist", "psmnist", "npcifar10"
-    architectures = ["baseline"]#, "cycle", "antisymmetric"]
+    CURRENT_DATASET = ["psmnist", "npcifar10"] # Options: "mnist", "psmnist", "npcifar10"
+    architectures = ["baseline", "cycle", "antisymmetric"]
 
-    for arch in architectures:
-        print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
+    for dataset in [CURRENT_DATASET]:
+        print(f"\n=== Starting Bayesian Optimization for Dataset: {dataset} ===")
+        for arch in architectures:
+            print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
 
-        study = optuna.create_study(
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=42), 
-            study_name=f"{CURRENT_DATASET}_{arch}"
-        )
+            study = optuna.create_study(
+                direction="maximize",
+                sampler=optuna.samplers.TPESampler(seed=42), 
+                study_name=f"{CURRENT_DATASET}_{arch}"
+            )
 
-        study.optimize(
-            lambda trial: objective(trial, arch, CURRENT_DATASET, model_type="esn"),
-            n_trials=100,
-            show_progress_bar=True,
-        )
+            study.optimize(
+                lambda trial: objective(trial, arch, CURRENT_DATASET, model_type="esn"),
+                n_trials=100,
+                show_progress_bar=True,
+            )
 
-        print("\nBest:", study.best_params, "Acc:", study.best_value)
+            print("\nBest:", study.best_params, "Acc:", study.best_value)
