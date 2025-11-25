@@ -231,24 +231,22 @@ def objective(trial, arch, dataset_name, model_type="esn"):
 if __name__ == "__main__":
     multi = False 
     # Define which dataset you want to run here
-    CURRENT_DATASET = ["psmnist", "npcifar10"] # Options: "mnist", "psmnist", "npcifar10"
+    CURRENT_DATASET = "psmnist" # Options: "mnist", "psmnist", "npcifar10"
     architectures = ["baseline", "cycle", "antisymmetric"]
 
-    for dataset in [CURRENT_DATASET]:
-        print(f"\n=== Starting Bayesian Optimization for Dataset: {dataset} ===")
-        for arch in architectures:
-            print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
+    for arch in architectures:
+        print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
 
-            study = optuna.create_study(
-                direction="maximize",
-                sampler=optuna.samplers.TPESampler(seed=42), 
-                study_name=f"{CURRENT_DATASET}_{arch}"
-            )
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=42), 
+            study_name=f"{CURRENT_DATASET}_{arch}"
+        )
 
-            study.optimize(
-                lambda trial: objective(trial, arch, CURRENT_DATASET, model_type="esn"),
-                n_trials=100,
-                show_progress_bar=True,
-            )
+        study.optimize(
+            lambda trial: objective(trial, arch, CURRENT_DATASET, model_type="esn"),
+            n_trials=100,
+            show_progress_bar=True,
+        )
 
-            print("\nBest:", study.best_params, "Acc:", study.best_value)
+        print("\nBest:", study.best_params, "Acc:", study.best_value)
