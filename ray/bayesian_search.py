@@ -122,6 +122,9 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     if arch == "baseline":
         n_layers_opts = [1]
         n_hid = 317
+        if multi == True:
+            n_layers_opts = [5, 10]
+            n_hid = 500
     elif arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
         n_hid = 500
@@ -206,17 +209,21 @@ def objective(trial, arch, dataset_name, model_type="esn"):
 
     # 8. Logging
     os.makedirs(config["logdir"], exist_ok=True)
-    with open(os.path.join(config["logdir"], "trial_log.jsonl"), "a") as f:
+    if multi == True:
+        log_file = os.path.join(config["logdir"], f"trial_log_multi_{dataset_name}_{arch}.jsonl")
+    else:
+        log_file = os.path.join(config["logdir"], "trial_log.jsonl")
         log_record = dict(config)
-        log_record["valid_accuracy"] = float(valid_acc)
-        _, reservoir_params, _ = count_parameters(model)
-        log_record["reservoir_params"] = reservoir_params
+    log_record["valid_accuracy"] = float(valid_acc)
+    _, reservoir_params, _ = count_parameters(model)
+    log_record["reservoir_params"] = reservoir_params
+    with open(log_file, "a") as f:
         f.write(json.dumps(log_record) + "\n")
 
     return valid_acc
 
 if __name__ == "__main__":
-    
+    multi = True 
     # Define which dataset you want to run here
     CURRENT_DATASET = "psmnist" # Options: "mnist", "psmnist", "npcifar10"
     architectures = ["baseline", "cycle", "antisymmetric"]
