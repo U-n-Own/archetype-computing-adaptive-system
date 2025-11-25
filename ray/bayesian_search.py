@@ -231,8 +231,8 @@ def objective(trial, arch, dataset_name, model_type="esn"):
 if __name__ == "__main__":
     multi = True 
     # Define which dataset you want to run here
-    CURRENT_DATASET = "psmnist" # Options: "mnist", "psmnist", "npcifar10"
-    architectures = ["baseline", "cycle", "antisymmetric"]
+    CURRENT_DATASET = "mnist" # Options: "mnist", "psmnist", "npcifar10"
+    architectures = ["baseline"]#, "cycle", "antisymmetric"]
 
     for arch in architectures:
         print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
