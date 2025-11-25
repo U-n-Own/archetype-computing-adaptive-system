@@ -143,7 +143,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
         "coupling_epsilon": 20.0, # Consider optimizing this too if antisym
         "concat": True,
-        "batch": 1024,
+        "batch": 256,
         "seed": 42,
         "dataroot": "./data",
         "logdir": f"./logs/bayesopt_{dataset_name}_{arch}",
@@ -211,14 +211,20 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     os.makedirs(config["logdir"], exist_ok=True)
     if multi == True:
         log_file = os.path.join(config["logdir"], f"trial_log_multi_{dataset_name}_{arch}.jsonl")
+        log_record = dict(config)
+        log_record["valid_accuracy"] = float(valid_acc)
+        _, reservoir_params, _ = count_parameters(model)
+        log_record["reservoir_params"] = reservoir_params
+        with open(log_file, "a") as f:
+            f.write(json.dumps(log_record) + "\n")
     else:
         log_file = os.path.join(config["logdir"], "trial_log.jsonl")
         log_record = dict(config)
-    log_record["valid_accuracy"] = float(valid_acc)
-    _, reservoir_params, _ = count_parameters(model)
-    log_record["reservoir_params"] = reservoir_params
-    with open(log_file, "a") as f:
-        f.write(json.dumps(log_record) + "\n")
+        log_record["valid_accuracy"] = float(valid_acc)
+        _, reservoir_params, _ = count_parameters(model)
+        log_record["reservoir_params"] = reservoir_params
+        with open(log_file, "a") as f:
+            f.write(json.dumps(log_record) + "\n")
 
     return valid_acc
 
