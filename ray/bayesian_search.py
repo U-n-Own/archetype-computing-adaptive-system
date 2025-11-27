@@ -6,6 +6,7 @@ import torch
 import optuna
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
+from tools.esn_param_match import get_units_for_target_params 
 
 from experiments.utils import set_seed
 # Import all necessary getters
@@ -121,15 +122,16 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     # 1. Configure constraints
     if arch == "baseline":
         n_layers_opts = [1]
-        n_hid = 317
+        # n_hid will be set dynamically below
         if multi == True:
             n_layers_opts = [5, 10]
-            n_hid = 500
     elif arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
-        n_hid = 500
     else:
         n_layers_opts = [1, 5, 10]
+
+    n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
+    n_hid = get_units_for_target_params(architecture=arch, n_layers=n_layers, target_params=100_000)
 
     # 2. Hyperparameters
     config = {
@@ -137,7 +139,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         "model": model_type,
         "arch": arch,
         "n_hid": n_hid,
-        "n_layers": trial.suggest_categorical("n_layers", n_layers_opts),
+        "n_layers": n_layers,
         "rho": trial.suggest_float("rho", 0.9, 9, log=True), # Adjusted range usually better for DeepESN
         "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
         "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
@@ -231,7 +233,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
 if __name__ == "__main__":
     multi = False 
     # Define which dataset you want to run here
-    CURRENT_DATASET = "psmnist" # Options: "mnist", "psmnist", "npcifar10"
+    CURRENT_DATASET = "mnist" # Options: "mnist", "psmnist", "npcifar10"
     architectures = ["baseline", "cycle", "antisymmetric"]
 
     for arch in architectures:
