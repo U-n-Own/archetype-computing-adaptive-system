@@ -418,7 +418,8 @@ class DeepReservoir(torch.nn.Module):
         for _ in range(n_layers - 1):
             # In cycle mode, all layers receive the original input (like SCR)
             # In non-cycle mode, layers receive input from previous layer
-            layer_input_size = input_size if self.cycle else last_h_size
+            #layer_input_size = input_size if self.cycle else last_h_size
+            layer_input_size = last_h_size
             
             reservoir_layers.append(
                 ReservoirLayer(
@@ -490,9 +491,8 @@ class DeepReservoir(torch.nn.Module):
                 stacked_states = torch.stack(layer_states[i], dim=1)
                 states.append(stacked_states)
                 states_last.append(stacked_states[:, -1, :])
-                
         elif self.cycle:
-            # Initialize hidden states for each layer
+            
             layer_hidden_states = []
             for i, res_layer in enumerate(self.reservoir):
                 layer_hidden_states.append(torch.zeros(batch_size, res_layer.net.units).to(X.device))
@@ -500,39 +500,39 @@ class DeepReservoir(torch.nn.Module):
             layer_states = [[] for _ in range(len(self.reservoir))]
             
             for t in range(seq_len):
-                current_input = X[:, t, :]
                 new_hidden_states = []
                 
                 for i, res_layer in enumerate(self.reservoir):
-                    # Get previous layer's output for ring connection
                     if i == 0:
-                        # First layer gets feedback from last layer (closing the ring)
+                        # First layer receives external input
+                        layer_input = X[:, t, :]
+                        
+                        # First layer receives feedback from the Last layer (from t-1)
                         if len(self.reservoir) > 1:
-                            prev_layer_output = layer_hidden_states[-1]
+                            h_feedback = layer_hidden_states[-1]
                         else:
-                            # Single layer: self-feedback from its own previous timestep
-                            #prev_layer_output = layer_hidden_states[0]
-                            # If this is not none: For 1 layer case we get twice the same state
-                            prev_layer_output = None
+                            # Edge case: 1 layer self-feedback
+                            h_feedback = layer_hidden_states[0]
                     else:
-                        prev_layer_output = layer_hidden_states[i-1]
-                    
+                        # Subsequent layers receive output from previous layer at CURRENT timestep
+                        # layer_states[i-1] is the list of outputs for the previous layer
+                        # layer_states[i-1][-1] is the output just computed for time t
+                        layer_input = layer_states[i-1][-1]
+                        h_feedback = None
+
                     layer_output, layer_hidden = res_layer.net(
-                        current_input, 
-                        layer_hidden_states[i],  # Previous hidden state of this layer
-                        # TODO Critical change here if we set first_layer=True 
-                        # all layers can receive the cycle input, instead if set to 
-                        # first_layer = (i == 0) only the first layer receives the cycle input
-                        first_layer=True,  # All layers can receive cycle input
-                        h_last=prev_layer_output  # Ring connection input
+                        layer_input, 
+                        layer_hidden_states[i],  
+                        first_layer=(i == 0),    
+                        h_last=h_feedback        
                     )
                     
                     new_hidden_states.append(layer_hidden)
                     layer_states[i].append(layer_output)
                 
-                # Update hidden states for next timestep
                 layer_hidden_states = new_hidden_states
             
+            # Stack results for output
             for i in range(len(self.reservoir)):
                 stacked_states = torch.stack(layer_states[i], dim=1)
                 states.append(stacked_states)
