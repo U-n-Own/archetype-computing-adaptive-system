@@ -145,7 +145,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         "arch": arch,
         "n_hid": n_hid,
         "n_layers": n_layers,
-        "rho": trial.suggest_float("rho", 0.9, 9, log=True), # Adjusted range usually better for DeepESN
+        "rho": trial.suggest_float("rho", 0.1, 9, log=True), # Adjusted range usually better for DeepESN
         "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
         "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
         "coupling_epsilon": 20.0, # Consider optimizing this too if antisym
