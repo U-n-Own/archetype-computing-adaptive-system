@@ -16,17 +16,20 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000)
     elif architecture == "cycle":
         # Uses h2h, cycle_kernel (2 dense matrices) + negligible x2h
         matrices_per_layer = 2
-    else: # Standard / Baseline
-        # Uses h2h, x2h (2 dense matrices)
+    elif architecture in ["baseline", "baseline_deep"]:
+        # Baseline and Baseline_deep: both use h2h, x2h (2 dense matrices)
+        # For baseline_deep, scaling is the same as baseline, just with n_layers > 1
         matrices_per_layer = 2
-        
+    else: # Standard fallback
+        matrices_per_layer = 2
+
     # Calculate units per layer needed
     # Params approx = n_layers * matrices_per_layer * (units_per_layer^2)
     units_per_layer = np.sqrt(target_params / (n_layers * matrices_per_layer))
-    
+
     # Round to nearest integer and calculate total units
     total_units = int(round(units_per_layer) * n_layers)
-    
+
     return total_units
 
 def compute_hidden_size(arch, n_layers, target_params=100_000):
