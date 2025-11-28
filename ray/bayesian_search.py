@@ -86,11 +86,18 @@ def get_data_config(dataset_name, dataroot, batch_size, seed, device):
 # -------------------------------------------------------------
 # Helper: Count Params
 # -------------------------------------------------------------
+
 def count_parameters(model):
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     reservoir_params = total_params - trainable_params
-    return total_params, reservoir_params, trainable_params
+    return total_params, reservoir_params
+
+# Count trainable parameters in sklearn LogisticRegression
+def count_logreg_params(clf):
+    n_weights = clf.coef_.size
+    n_bias = clf.intercept_.size
+    return n_weights + n_bias
 
 # -------------------------------------------------------------
 # Evaluate
@@ -123,12 +130,10 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     if arch == "baseline":
         n_layers_opts = [1]
         # n_hid will be set dynamically below
-        if multi == True:
+        if arch == "baseline_deep":
             n_layers_opts = [5, 10]
     elif arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
-    else:
-        n_layers_opts = [1, 5, 10]
 
     n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
     n_hid = get_units_for_target_params(architecture=arch, n_layers=n_layers, target_params=100_000)
@@ -145,7 +150,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
         "coupling_epsilon": 20.0, # Consider optimizing this too if antisym
         "concat": True,
-        "batch": 512,
+        "batch": 812,
         "seed": 42,
         "dataroot": "./data",
         "logdir": f"./logs/bayesopt_{dataset_name}_{arch}",
@@ -211,44 +216,42 @@ def objective(trial, arch, dataset_name, model_type="esn"):
 
     # 8. Logging
     os.makedirs(config["logdir"], exist_ok=True)
+    total_params, reservoir_params = count_parameters(model)
+    readout_params = count_logreg_params(clf)
+    log_record = dict(config)
+    log_record["valid_accuracy"] = float(valid_acc)
+    log_record["reservoir_params"] = reservoir_params
+    log_record["readout_params"] = readout_params
+    log_record["total_params"] = total_params + readout_params
     if multi == True:
         log_file = os.path.join(config["logdir"], f"trial_log_multi_{dataset_name}_{arch}.jsonl")
-        log_record = dict(config)
-        log_record["valid_accuracy"] = float(valid_acc)
-        _, reservoir_params, _ = count_parameters(model)
-        log_record["reservoir_params"] = reservoir_params
-        with open(log_file, "a") as f:
-            f.write(json.dumps(log_record) + "\n")
     else:
         log_file = os.path.join(config["logdir"], "trial_log.jsonl")
-        log_record = dict(config)
-        log_record["valid_accuracy"] = float(valid_acc)
-        _, reservoir_params, _ = count_parameters(model)
-        log_record["reservoir_params"] = reservoir_params
-        with open(log_file, "a") as f:
-            f.write(json.dumps(log_record) + "\n")
+    with open(log_file, "a") as f:
+        f.write(json.dumps(log_record) + "\n")
 
     return valid_acc
 
 if __name__ == "__main__":
     multi = False 
-    # Define which dataset you want to run here
-    CURRENT_DATASET = "mnist" # Options: "mnist", "psmnist", "npcifar10"
-    architectures = ["baseline", "cycle", "antisymmetric"]
+    # List of datasets to run
+    DATASETS = ["mnist", "psmnist", "npcifar10"]
+    architectures = ["baseline", "cycle", "antisymmetric", "baseline_deep"]
 
-    for arch in architectures:
-        print(f"\n=== Optimizing {arch} on {CURRENT_DATASET} ===")
+    for dataset in DATASETS:
+        for arch in architectures:
+            print(f"\n=== Optimizing {arch} on {dataset} ===")
 
-        study = optuna.create_study(
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=42), 
-            study_name=f"{CURRENT_DATASET}_{arch}"
-        )
+            study = optuna.create_study(
+                direction="maximize",
+                sampler=optuna.samplers.TPESampler(seed=42), 
+                study_name=f"{dataset}_{arch}"
+            )
 
-        study.optimize(
-            lambda trial: objective(trial, arch, CURRENT_DATASET, model_type="esn"),
-            n_trials=100,
-            show_progress_bar=True,
-        )
+            study.optimize(
+                lambda trial: objective(trial, arch, dataset, model_type="esn"),
+                n_trials=100,
+                show_progress_bar=True,
+            )
 
-        print("\nBest:", study.best_params, "Acc:", study.best_value)
+            print("\nBest:", study.best_params, "Acc:", study.best_value)
