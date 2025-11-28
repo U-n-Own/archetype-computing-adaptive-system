@@ -129,8 +129,8 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     # 1. Configure constraints
     if arch == "baseline":
         n_layers_opts = [1]
-        # n_hid will be set dynamically below
-        if arch == "baseline_deep":
+    # n_hid will be set dynamically below
+    elif arch == "baseline_deep":
             n_layers_opts = [5, 10]
     elif arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
