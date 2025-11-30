@@ -5,35 +5,78 @@ import numpy as np
 from acds.archetypes.esn import DeepReservoir
 
 
-def get_units_for_target_params(architecture, n_layers=10, target_params=100000):
+def get_units_for_target_params(architecture, n_layers=10, target_params=100000, input_size=1):
     """
-    Calculates the required total_units to achieve a target number of parameters.
-    Based on Dense matrix implementation in ron.py.
+    Calculates units_per_layer solving the quadratic equation:
+    a * N^2 + b * N + c = 0
+    where N is units_per_layer.
     """
-    if architecture == "antisymmetric":
-        # Uses h2h, x2h, C_coupling, C_coupling_T_neg (4 dense matrices)
-        matrices_per_layer = 4
-    elif architecture == "cycle":
-        # Uses h2h, cycle_kernel (2 dense matrices) + negligible x2h
-        matrices_per_layer = 2
+    
+    # Coefficients for aN^2 + bN + c = 0
+    # a: scales with N^2 (Recurrent / Inter-layer weights)
+    # b: scales with N (Input weights)
+    # c: -target_params
+    
+    if architecture == "cycle":
+        # Cycle uses: 
+        # 1. Recurrent Matrix (N^2)
+        # 2. Cycle Projection Matrix (N^2)
+        # 3. Input Matrix (Input_dim * N) <-- Applied to ALL layers in your implementation
+        
+        a = 2 * n_layers
+        b = input_size * n_layers 
+        c = -target_params
+
+    elif architecture == "antisymmetric":
+        # Antisymmetric uses:
+        # 1. Recurrent (N^2)
+        # 2. Coupling C (N^2)
+        # 3. Coupling C_T (N^2)
+        # 4. Input/Inter-layer: 
+        #    - Layer 0: Input_dim * N
+        #    - Layers 1..L: N * N (from prev layer)
+        
+        # Total approx: L*3N^2 (Rec+C+CT) + (L-1)*N^2 (Inter) + 1*Input_dim*N
+        # = (4L - 1) * N^2 + Input_dim * N
+        
+        a = 4 * n_layers - 1
+        b = input_size
+        c = -target_params
+        
     elif architecture in ["baseline", "baseline_deep"]:
-        # Baseline and Baseline_deep: both use h2h, x2h (2 dense matrices)
-        # For baseline_deep, scaling is the same as baseline, just with n_layers > 1
-        matrices_per_layer = 2
-    else: # Standard fallback
-        matrices_per_layer = 2
+        # DeepESN uses:
+        # 1. Recurrent (N^2)
+        # 2. Input/Inter-layer:
+        #    - Layer 0: Input_dim * N
+        #    - Layers 1..L: N * N
+        
+        # Total: L*N^2 (Rec) + (L-1)*N^2 (Inter) + Input_dim*N
+        # = (2L - 1) * N^2 + Input_dim * N
+        
+        a = 2 * n_layers - 1
+        b = input_size
+        c = -target_params
+        
+    else:
+        # Fallback default (Naive)
+        a = 2 * n_layers
+        b = 0
+        c = -target_params
 
-    # Calculate units per layer needed
-    # Params approx = n_layers * matrices_per_layer * (units_per_layer^2)
-    units_per_layer = np.sqrt(target_params / (n_layers * matrices_per_layer))
-
-    # Round to nearest integer and calculate total units
+    # Quadratic Formula: N = (-b + sqrt(b^2 - 4ac)) / 2a
+    delta = b**2 - 4 * a * c
+    if delta < 0:
+        raise ValueError("Configuration results in negative delta, impossible to satisfy.")
+        
+    units_per_layer = (-b + np.sqrt(delta)) / (2 * a)
+    
+    # Calculate total units
     total_units = int(round(units_per_layer) * n_layers)
 
     return total_units
 
-def compute_hidden_size(arch, n_layers, target_params=100_000):
-    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params)
+def compute_hidden_size(arch, n_layers, target_params=100_000, input_size=96):
+    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params, input_size=input_size)
 
 def main():
     # Example usage

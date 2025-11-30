@@ -125,7 +125,7 @@ def evaluate(model, data_loader, clf, scaler, preprocess_fn):
 # Objective Function
 # -------------------------------------------------------------
 def objective(trial, arch, dataset_name, model_type="esn"):
-
+    input_size = 1  # Default input size for npcifar10; adjust as needed per dataset
     # 1. Configure constraints
     if arch == "baseline":
         n_layers_opts = [1]
@@ -136,8 +136,12 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         n_layers_opts = [5, 10]
 
     n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
-    n_hid = get_units_for_target_params(architecture=arch, n_layers=n_layers, target_params=100_000)
-
+    
+    if dataset_name == "mnist" or dataset_name == "psmnist":
+        input_size = 1
+    elif dataset_name == "npcifar10":
+        input_size = 96
+    n_hid = get_units_for_target_params(architecture=arch, n_layers=n_layers, target_params=100_000, input_size=input_size) 
     # 2. Hyperparameters
     config = {
         "dataset": dataset_name,
