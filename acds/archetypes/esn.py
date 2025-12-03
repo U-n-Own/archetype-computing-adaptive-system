@@ -116,7 +116,7 @@ class ReservoirCell(torch.nn.Module):
                     W = spectral_norm_scaling(W, spectral_radius)
                     self.recurrent_kernel = nn.Parameter(W, requires_grad=False)
                 else:
-                    self.recurrent_kernel = nn.Parameter(torch.zeros(self.units, self.units), requires_grad=False)
+                    self.recurrent_kernel = None
                 
                 # Ring projection from previous layer in cycle
                 #self.projection_kernel = nn.Parameter(torch.eye(self.units) * spectral_radius, requires_grad=False)
@@ -138,18 +138,21 @@ class ReservoirCell(torch.nn.Module):
             )
             self.kernel = nn.Parameter(self.kernel, requires_grad=False)
 
-            W = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
-            # re-scale the weight matrix to control the effective spectral radius
-            # of the linearized system
-            if self.leaky == 1:
-                W = spectral_norm_scaling(W, spectral_radius)
-                self.recurrent_kernel = W
+            if self.connectivity_recurrent > 0:
+                W = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
+                # re-scale the weight matrix to control the effective spectral radius
+                # of the linearized system
+                if self.leaky == 1:
+                    W = spectral_norm_scaling(W, spectral_radius)
+                    self.recurrent_kernel = W
+                else:
+                    I = sparse_eye_init(self.units)
+                    W = W * self.leaky + (I * (1 - self.leaky))
+                    W = spectral_norm_scaling(W, spectral_radius)
+                    self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
+                self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
             else:
-                I = sparse_eye_init(self.units)
-                W = W * self.leaky + (I * (1 - self.leaky))
-                W = spectral_norm_scaling(W, spectral_radius)
-                self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
-            self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
+                self.recurrent_kernel = None
 
         if self.cycle:
             self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
@@ -189,7 +192,10 @@ class ReservoirCell(torch.nn.Module):
             torch.Tensor: hidden state tensor shaped as (batch, state_dim).
         """     
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
-        state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
+        if self.recurrent_kernel is not None:
+            state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
+        else:
+            state_part = torch.zeros_like(input_part)
         
         # Initialize the total input as standard terms
         total_input = input_part + self.bias.to(dtype=xt.dtype) + state_part.to(dtype=xt.dtype)
