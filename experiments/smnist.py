@@ -1,3 +1,4 @@
+
 import argparse
 import os
 import warnings
@@ -20,6 +21,10 @@ from acds.benchmarks import get_mnist_data
 
 from typing import List
 
+def count_logreg_params(clf):
+    n_weights = clf.coef_.size
+    n_bias = clf.intercept_.size
+    return n_weights + n_bias
 
 def count_parameters(model):
     """Count total parameters and reservoir parameters in the model.
@@ -259,6 +264,10 @@ for i in range(args.trials):
     scaler = preprocessing.StandardScaler().fit(activations)
     activations = scaler.transform(activations)
     classifier = LogisticRegression(max_iter=1000).fit(activations, ys)
+
+    # Print readout (classifier) parameter count for debug
+    readout_params = count_logreg_params(classifier)
+    print(f"Readout (LogisticRegression) parameters: {readout_params}")
     train_acc = test(train_loader, classifier, scaler)
     valid_acc = test(valid_loader, classifier, scaler) if not args.use_test else 0.0
     test_acc = test(test_loader, classifier, scaler) if args.use_test else 0.0
