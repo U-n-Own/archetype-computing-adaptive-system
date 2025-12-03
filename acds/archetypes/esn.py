@@ -121,10 +121,14 @@ class ReservoirCell(torch.nn.Module):
                 # Ring projection from previous layer in cycle
                 #self.projection_kernel = nn.Parameter(torch.eye(self.units) * spectral_radius, requires_grad=False)
                 # Init the cycle projection as W_rec
-                self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
+                #self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=self.connectivity_recurrent)
                 # then scale projection kernel by spectral radius
+                #self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
+                #self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
+                # Fix: Use connectivity_inter (or a fixed value) for the cycle, not connectivity_recurrent
+                cycle_connectivity = self.connectivity_input
+                self.projection_kernel = sparse_recurrent_tensor_init(self.units, C=cycle_connectivity)
                 self.projection_kernel = spectral_norm_scaling(self.projection_kernel, spectral_radius)
-                self.projection_kernel = nn.Parameter(self.projection_kernel, requires_grad=False)
         else:
             # No cycle mode 
             self.kernel = (
