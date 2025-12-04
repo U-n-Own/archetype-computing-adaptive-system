@@ -126,13 +126,22 @@ def evaluate(model, data_loader, clf, scaler, preprocess_fn):
 # -------------------------------------------------------------
 def objective(trial, arch, dataset_name, model_type="esn"):
     input_size = 1  # Default input size for npcifar10; adjust as needed per dataset
+    
+    # Handle cycle_zero architecture variant
+    zero_recurrence = False
+    if arch == "cycle_zero":
+        real_arch = "cycle"
+        zero_recurrence = True
+    else:
+        real_arch = arch
+
     # 1. Configure constraints
-    if arch == "baseline":
+    if real_arch == "baseline":
         n_layers_opts = [1]
     # n_hid will be set dynamically below
-    elif arch == "baseline_deep":
+    elif real_arch == "baseline_deep":
             n_layers_opts = [5, 10]
-    elif arch in ["cycle", "antisymmetric"]:
+    elif real_arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
 
     n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
@@ -141,12 +150,13 @@ def objective(trial, arch, dataset_name, model_type="esn"):
         input_size = 1
     elif dataset_name == "npcifar10":
         input_size = 96
-    n_hid = get_units_for_target_params(architecture=arch, n_layers=n_layers, target_params=100_000, input_size=input_size) 
+    
+    n_hid = get_units_for_target_params(architecture=real_arch, n_layers=n_layers, target_params=100_000, input_size=input_size, zero_recurrence=zero_recurrence) 
     # 2. Hyperparameters
     config = {
         "dataset": dataset_name,
         "model": model_type,
-        "arch": arch,
+        "arch": arch, # Keep original name for logging
         "n_hid": n_hid,
         "n_layers": n_layers,
         "rho": trial.suggest_float("rho", 0.1, 9, log=True), # Adjusted range usually better for DeepESN
@@ -161,8 +171,8 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     }
     
     # Logic flags
-    cycle_flag = (arch == "cycle")
-    antisymmetric_flag = (arch == "antisymmetric")
+    cycle_flag = (real_arch == "cycle")
+    antisymmetric_flag = (real_arch == "antisymmetric")
 
     # 3. Load Data & Config
     set_seed(config["seed"])
@@ -176,6 +186,8 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     # 4. Build Model
     if config["model"] == "esn":
         units_per_layer = config["n_hid"] // config["n_layers"]
+        connectivity_recurrent = 0 if zero_recurrence else units_per_layer
+        
         model = DeepReservoir(
             input_size=input_dim, # Dynamic based on dataset
             tot_units=config["n_hid"],
@@ -183,7 +195,7 @@ def objective(trial, arch, dataset_name, model_type="esn"):
             spectral_radius=config["rho"],
             input_scaling=config["inp_scaling"],
             inter_scaling=config["inp_scaling"],
-            connectivity_recurrent=units_per_layer,
+            connectivity_recurrent=connectivity_recurrent,
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=config["leaky"],
@@ -240,7 +252,7 @@ if __name__ == "__main__":
     multi = False 
     # List of datasets to run
     DATASETS = ["mnist", "psmnist", "npcifar10"]
-    architectures = ["baseline", "cycle", "antisymmetric", "baseline_deep"]
+    architectures = ["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
 
     for dataset in DATASETS:
         for arch in architectures:

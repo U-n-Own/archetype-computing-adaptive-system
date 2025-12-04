@@ -5,7 +5,7 @@ import numpy as np
 from acds.archetypes.esn import DeepReservoir
 
 
-def get_units_for_target_params(architecture, n_layers=10, target_params=100000, input_size=1):
+def get_units_for_target_params(architecture, n_layers=10, target_params=100000, input_size=1, zero_recurrence=False):
     """
     Calculates units_per_layer solving the quadratic equation:
     a * N^2 + b * N + c = 0
@@ -23,7 +23,12 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000,
         # 2. Cycle Projection Matrix (N^2)
         # 3. Input Matrix (Input_dim * N) <-- Applied to ALL layers in your implementation
         
-        a = 2 * n_layers
+        if zero_recurrence:
+            # If zero_recurrence is True, we remove the Recurrent Matrix
+            a = 1 * n_layers
+        else:
+            a = 2 * n_layers
+            
         b = input_size * n_layers 
         c = -target_params
 
@@ -39,7 +44,13 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000,
         # Total approx: L*3N^2 (Rec+C+CT) + (L-1)*N^2 (Inter) + 1*Input_dim*N
         # = (4L - 1) * N^2 + Input_dim * N
         
-        a = 4 * n_layers - 1
+        if zero_recurrence:
+            # Remove Recurrent (N^2)
+            # Total: L*2N^2 (C+CT) + (L-1)*N^2 (Inter) = (3L - 1) * N^2
+            a = 3 * n_layers - 1
+        else:
+            a = 4 * n_layers - 1
+            
         b = input_size
         c = -target_params
         
@@ -53,7 +64,16 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000,
         # Total: L*N^2 (Rec) + (L-1)*N^2 (Inter) + Input_dim*N
         # = (2L - 1) * N^2 + Input_dim * N
         
-        a = 2 * n_layers - 1
+        if zero_recurrence:
+            # Remove Recurrent (N^2)
+            # Total: (L-1)*N^2 (Inter)
+            a = n_layers - 1
+            if a == 0: # Single layer with no recurrence -> 0 * N^2 + Input_dim * N = target
+                # This becomes linear: b * N + c = 0 -> N = -c / b
+                a = 0
+        else:
+            a = 2 * n_layers - 1
+            
         b = input_size
         c = -target_params
         
@@ -64,19 +84,24 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000,
         c = -target_params
 
     # Quadratic Formula: N = (-b + sqrt(b^2 - 4ac)) / 2a
-    delta = b**2 - 4 * a * c
-    if delta < 0:
-        raise ValueError("Configuration results in negative delta, impossible to satisfy.")
-        
-    units_per_layer = (-b + np.sqrt(delta)) / (2 * a)
+    if a == 0:
+        if b == 0:
+            raise ValueError("Both a and b are zero, cannot solve.")
+        units_per_layer = -c / b
+    else:
+        delta = b**2 - 4 * a * c
+        if delta < 0:
+            raise ValueError("Configuration results in negative delta, impossible to satisfy.")
+            
+        units_per_layer = (-b + np.sqrt(delta)) / (2 * a)
     
     # Calculate total units
     total_units = int(round(units_per_layer) * n_layers)
 
     return total_units
 
-def compute_hidden_size(arch, n_layers, target_params=100_000, input_size=96):
-    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params, input_size=input_size)
+def compute_hidden_size(arch, n_layers, target_params=100_000, input_size=96, zero_recurrence=False):
+    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params, input_size=input_size, zero_recurrence=zero_recurrence)
 
 def main():
     # Example usage
