@@ -161,10 +161,8 @@ def test(data_loader, classifier, scaler, seq_length=1000):
         images = images.to(device)
         # Transform to npCIFAR-10 format: (batch, seq_length, 96)
         sequences = transform_to_npcifar10(images, seq_length, device)
-        output = model(sequences)[-1][0]
-        # Handle case where output might be a list
-        if isinstance(output, list):
-            output = output[0]
+        states, _ = model(sequences)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
@@ -309,10 +307,8 @@ for trial in range(args.trials):
         images = images.to(device)
         # Transform to npCIFAR-10 format: (batch, seq_length, 96)
         sequences = transform_to_npcifar10(images, seq_length, device)
-        output = model(sequences)[-1][0]
-        # Handle case where output might be a list
-        if isinstance(output, list):
-            output = output[0]
+        states, _ = model(sequences)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(labels)
     
