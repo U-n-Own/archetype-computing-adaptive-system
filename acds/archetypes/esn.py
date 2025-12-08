@@ -56,6 +56,7 @@ class ReservoirCell(torch.nn.Module):
         linear: bool = False,
         antisymmetric: bool = False,
         epsilon: float = 0.1,
+        gamma: float = 0.1,
     ):
         """Initializes the ReservoirCell.
 
@@ -77,6 +78,7 @@ class ReservoirCell(torch.nn.Module):
             linear (bool): whether to use linear activation. Defaults to False.
             antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
             epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
+            gamma (float): diffusion coefficient for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
 
@@ -93,6 +95,7 @@ class ReservoirCell(torch.nn.Module):
         self.linear = linear
         self.antisymmetric = antisymmetric
         self.epsilon = epsilon
+        self.gamma = gamma
         
         
         if self.cycle:
@@ -152,7 +155,7 @@ class ReservoirCell(torch.nn.Module):
                     self.recurrent_kernel = (W + I * (self.leaky - 1)) * (1 / self.leaky)
                 self.recurrent_kernel = nn.Parameter(self.recurrent_kernel, requires_grad=False)
             else:
-                self.recurrent_kernel = None
+                self.recurrent_kernel = nn.Parameter(torch.zeros(self.units, self.units), requires_grad=False)
 
         if self.cycle:
             self.bias = nn.init.uniform_(torch.empty(self.units), -1, 1) * self.input_scaling
@@ -169,6 +172,8 @@ class ReservoirCell(torch.nn.Module):
             # This will be used as C for backward coupling and -C^T for forward coupling
             # Matrix should be square with dimension equal to the number of units
             C_base = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
+            # Scale the coupling matrix to have spectral radius 1.0 before epsilon scaling
+            C_base = spectral_norm_scaling(C_base, 1.0)
             self.C_coupling = nn.Parameter(C_base, requires_grad=False)
             
             # For convenience, also store -C^T
@@ -209,7 +214,12 @@ class ReservoirCell(torch.nn.Module):
         
         # Add antisymmetric coupling if enabled
         if self.antisymmetric:
+            
             antisymmetric_part = torch.zeros_like(total_input)
+            
+            # add diffusion term -I*\gamma to the W_rec
+            # This corresponds to subtracting gamma * h_prev from the total input
+            total_input = total_input - self.gamma * h_prev.to(dtype=xt.dtype)
             
             # Backward coupling: C * h_{l-1}^{(t-1)}
             if h_prev_layer is not None and self.C_coupling is not None:
@@ -223,6 +233,9 @@ class ReservoirCell(torch.nn.Module):
             
             # Scale by epsilon and add to total input
             total_input = total_input + self.epsilon * antisymmetric_part
+
+            
+            
         
         # Apply activation function
         if self.linear:
@@ -254,6 +267,8 @@ class ReservoirLayer(torch.nn.Module):
         linear: bool = False,
         antisymmetric: bool = False,
         epsilon: float = 0.1,
+        gamma: float = 0.1,
+        
     ):
         """Initializes the ReservoirLayer.
 
@@ -274,6 +289,7 @@ class ReservoirLayer(torch.nn.Module):
             linear (bool): whether to use linear activation. Defaults to False.
             antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
             epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
+            gamma (float): diffusion coefficient for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
         self.net = ReservoirCell(
@@ -289,6 +305,7 @@ class ReservoirLayer(torch.nn.Module):
             linear,
             antisymmetric,
             epsilon,
+            gamma,
         )
 
     def init_hidden(self, batch_size: int):
@@ -351,6 +368,7 @@ class DeepReservoir(torch.nn.Module):
         linear: bool = False,
         antisymmetric: bool = False,
         epsilon: float = 0.1,
+        gamma: float = 0.1,
     ):
         """Initializes the DeepReservoir.
 
@@ -379,6 +397,7 @@ class DeepReservoir(torch.nn.Module):
             linear (bool): whether to use linear activation. Defaults to False.
             antisymmetric (bool): whether to use antisymmetric coupling. Defaults to False.
             epsilon (float): coupling strength for antisymmetric connections. Defaults to 0.1.
+            gamma (float): diffusion coefficient for antisymmetric connections. Defaults to 0.1.
         """
         super().__init__()
         self.n_layers = n_layers
@@ -388,6 +407,7 @@ class DeepReservoir(torch.nn.Module):
         self.linear = linear
         self.antisymmetric = antisymmetric
         self.epsilon = epsilon
+        self.gamma = gamma
         self.batch_first = True  # DeepReservoir only supports batch_first
         # in case in which all the reservoir layers are concatenated, each level
         # contains units/layers neurons. This is done to keep the number of
@@ -419,6 +439,7 @@ class DeepReservoir(torch.nn.Module):
                 linear=linear,
                 antisymmetric=antisymmetric,
                 epsilon=epsilon,
+                gamma=gamma,
             )
         ]
 
@@ -445,6 +466,7 @@ class DeepReservoir(torch.nn.Module):
                     linear=linear,
                     antisymmetric=antisymmetric,
                     epsilon=epsilon,
+                    gamma=gamma,
                 )
             )
             last_h_size = self.layers_units
