@@ -17,6 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from experiments.utils import set_seed
 from acds.archetypes import (
     DeepReservoir,
     RandomizedOscillatorsNetwork,
@@ -100,13 +101,11 @@ def test(data_loader, classifier, scaler):
         images = images.to(device)
         # Data is already flattened and permuted from dataset
         images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
-        # --- FIX START ---
         # Unpack the tuple: states is (batch, time, units), _ is the list of layers
         states, _ = model(images)
         
         # Take the last timestep of the sequence
         output = states[:, -1, :]
-        # --- FIX END ---
         activations.append(output.cpu())
         ys.append(labels)
     activations = torch.cat(activations, dim=0).numpy()
@@ -140,6 +139,8 @@ for trial in range(args.trials):
     print(f"Trial {trial + 1}/{args.trials}")
     print(f"{'='*60}")
     
+    set_seed(args.seed + trial)
+
     # Create model based on args
     if args.esn:
         units_per_layer = args.n_hid // args.n_layers
@@ -240,13 +241,11 @@ for trial in range(args.trials):
         images = images.to(device)
         # Data is already flattened and permuted from dataset
         images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
-        # === REPLACEMENT START ===
         # Unpack the tuple just like you did in the test function
         states, _ = model(images)
         
         # Take the last timestep of the sequence
         output = states[:, -1, :]
-        # === REPLACEMENT END ===
         activations.append(output.cpu())
         ys.append(labels)
     
