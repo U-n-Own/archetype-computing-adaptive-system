@@ -160,6 +160,7 @@ for trial in range(args.trials):
             linear=False,
             antisymmetric=args.antisymmetric,
             epsilon=args.coupling_epsilon,
+            gamma=args.diffusive_gamma,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
