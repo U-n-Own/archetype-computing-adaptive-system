@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-Permuted Sequential MNIST (psMNIST) Classification Experiment
-
-This script tests various reservoir computing models on the psMNIST dataset,
-a challenging sequential task where MNIST pixel order is randomly permuted.
-"""
-
 import argparse
 import os
 import warnings
@@ -15,314 +7,282 @@ import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 from experiments.utils import set_seed
 from acds.archetypes import (
-    DeepReservoir,
-    RandomizedOscillatorsNetwork,
-    DeepRandomizedOscillatorsNetwork,
-    PhysicallyImplementableRandomizedOscillatorsNetwork,
-    MultistablePhysicallyImplementableRandomizedOscillatorsNetwork,
+	DeepReservoir,
+	RandomizedOscillatorsNetwork,
+	DeepRandomizedOscillatorsNetwork,
+	PhysicallyImplementableRandomizedOscillatorsNetwork,
+	MultistablePhysicallyImplementableRandomizedOscillatorsNetwork,
 )
 from acds.benchmarks import get_psmnist_data
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def count_logreg_params(clf):
+	n_weights = clf.coef_.size
+	n_bias = clf.intercept_.size
+	return n_weights + n_bias
+
 
 def count_parameters(model):
-    """Count total parameters and reservoir parameters in the model.
-    
-    Returns:
-        total_params: Total number of parameters in the model
-        reservoir_params: Number of parameters in the reservoir (non-trainable)
-        trainable_params: Number of trainable parameters (should be 0 for RC models)
-    """
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    reservoir_params = total_params - trainable_params
-    return total_params, reservoir_params, trainable_params
+	"""Return total, reservoir (non-trainable), and trainable parameter counts."""
+
+	total_params = sum(p.numel() for p in model.parameters())
+	trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+	reservoir_params = total_params - trainable_params
+	return total_params, reservoir_params, trainable_params
 
 
-parser = argparse.ArgumentParser(description="psMNIST Sequential Classification")
-parser.add_argument("--dataroot", type=str, help="Path to data directory")
-parser.add_argument("--resultroot", type=str, help="Path to results directory")
-parser.add_argument("--resultsuffix", type=str, default="", help="Suffix for result file name")
-parser.add_argument("--n_hid", type=int, default=256, help="Hidden size of reservoir")
+@torch.no_grad()
+def evaluate(loader, model, classifier, scaler, device):
+	activations, ys = [], []
+	for images, labels in tqdm(loader):
+		images = images.to(device)
+		images = images.unsqueeze(-1)  # (B, 784) -> (B, 784, 1)
+		states, _ = model(images)
+		output = states[:, -1, :]
+		activations.append(output.cpu())
+		ys.append(labels)
+
+	activations = torch.cat(activations, dim=0).numpy()
+	activations = scaler.transform(activations)
+	ys = torch.cat(ys, dim=0).numpy()
+	return classifier.score(activations, ys)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="Run a single psMNIST experiment")
+parser.add_argument("--dataroot", type=str, help="Root folder containing psMNIST data")
+parser.add_argument("--resultroot", type=str, help="Directory to append log files")
+parser.add_argument("--resultsuffix", type=str, default="", help="Suffix for log filenames")
+parser.add_argument("--n_hid", type=int, default=256, help="Total hidden units across layers")
+parser.add_argument("--n_layers", type=int, default=1, help="Number of reservoir layers")
 parser.add_argument("--batch", type=int, default=1000, help="Batch size")
-parser.add_argument("--dt", type=float, default=0.042, help="Step size for RON")
-parser.add_argument("--gamma", type=float, default=2.7, help="Gamma parameter for RON")
-parser.add_argument("--epsilon", type=float, default=4.7, help="Epsilon parameter for RON")
-parser.add_argument("--gamma_range", type=float, default=0.0, help="Gamma range for RON")
-parser.add_argument("--epsilon_range", type=float, default=0.0, help="Epsilon range for RON")
-parser.add_argument("--cpu", action="store_true", help="Force CPU usage")
-parser.add_argument("--esn", action="store_true", help="Use ESN model")
-parser.add_argument("--ron", action="store_true", help="Use RON model")
-parser.add_argument("--pron", action="store_true", help="Use PRON model")
-parser.add_argument("--mspron", action="store_true", help="Use MS-PRON model")
-parser.add_argument("--deepron", action="store_true", help="Use DeepRON model")
-parser.add_argument("--antisymmetric", action="store_true", help="Use antisymmetric coupling")
-parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="Diffusive term")
+parser.add_argument("--dt", type=float, default=0.042, help="coRNN time step")
+parser.add_argument("--gamma", type=float, default=2.7, help="coRNN gamma center")
+parser.add_argument("--epsilon", type=float, default=4.7, help="coRNN epsilon center")
+parser.add_argument("--gamma_range", type=float, default=2.7, help="Range for gamma")
+parser.add_argument("--epsilon_range", type=float, default=4.7, help="Range for epsilon")
+parser.add_argument("--seed", type=int, default=42, help="Random seed")
+parser.add_argument("--cpu", action="store_true", help="Force CPU")
+parser.add_argument("--esn", action="store_true", help="Use ESN/DeepESN")
+parser.add_argument("--ron", action="store_true", help="Use RON")
+parser.add_argument("--pron", action="store_true", help="Use PRON")
+parser.add_argument("--mspron", action="store_true", help="Use MSPRON")
+parser.add_argument("--deepron", action="store_true", help="Use DeepRON")
+parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="Diffusive coupling strength")
 parser.add_argument("--inp_scaling", type=float, default=1.0, help="Input scaling")
 parser.add_argument("--rho", type=float, default=0.99, help="Spectral radius")
-parser.add_argument("--leaky", type=float, default=1.0, help="Leaky parameter")
-parser.add_argument("--use_test", action="store_true", help="Use test set instead of validation")
-parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
-parser.add_argument("--n_layers", type=int, default=1, help="Number of layers")
-parser.add_argument("--concat", action="store_true", help="Concatenate layer outputs for readout")
-parser.add_argument("--cycle", action="store_true", help="Use cycle topology for deep reservoirs")
-parser.add_argument(
-    "--topology",
-    type=str,
-    default="full",
-    choices=["full", "ring", "band", "lower", "toeplitz", "orthogonal", "antisymmetric"],
-    help="Reservoir topology",
-)
-parser.add_argument("--sparsity", type=float, default=0.0, help="Reservoir sparsity [0, 1)")
-parser.add_argument("--reservoir_scaler", type=float, default=1.0, help="Reservoir scaler")
-parser.add_argument("--seed", type=int, default=42, help="Random seed for permutation")
-parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling strength for antisymmetric inter-layer connections")
+parser.add_argument("--leaky", type=float, default=1.0, help="Leaky parameter for ESN")
+parser.add_argument("--cycle", action="store_true", help="Use cycle reservoir")
+parser.add_argument("--antisymmetric", action="store_true", help="Enable antisymmetric coupling")
+parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Antisymmetric coupling epsilon")
+parser.add_argument("--concat", action="store_true", help="Concatenate layer states for readout")
+parser.add_argument("--use_test", action="store_true", help="Evaluate on test instead of validation")
+parser.add_argument("--trials", type=int, default=1, help="Number of repeated runs")
+parser.add_argument("--topology", type=str, default="full", choices=[
+	"full",
+	"ring",
+	"band",
+	"lower",
+	"toeplitz",
+	"orthogonal",
+	"antisymmetric",
+], help="Reservoir topology")
+parser.add_argument("--sparsity", type=float, default=0.0, help="Reservoir sparsity")
+parser.add_argument("--reservoir_scaler", type=float, default=1.0, help="Scaler for structured reservoirs")
 
 args = parser.parse_args()
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+set_seed(args.seed)
+print(f"Random seed set to: {args.seed}")
+
 if args.dataroot is None:
-    warnings.warn("No dataroot provided. Using current location as default.")
-    args.dataroot = os.getcwd()
+	warnings.warn("No dataroot provided. Using current location as default.")
+	args.dataroot = os.getcwd()
 if args.resultroot is None:
-    warnings.warn("No resultroot provided. Using current location as default.")
-    args.resultroot = os.getcwd()
-assert os.path.exists(args.resultroot), \
-    f"{args.resultroot} folder does not exist, please create it and run the script again."
-assert 1.0 > args.sparsity >= 0.0, "Sparsity must be in [0, 1)"
+	warnings.warn("No resultroot provided. Using current location as default.")
+	args.resultroot = os.getcwd()
 
-@torch.no_grad()
-def test(data_loader, classifier, scaler):
-    
-    
-    """Evaluate model performance on a dataset."""
-    activations, ys = [], []
-    for images, labels in tqdm(data_loader, desc="Testing"):
-        if hasattr(model, "reset_state"):
-            model.reset_state()
-        elif hasattr(model, "reset"):
-            model.reset()
-        images = images.to(device)
-        # Data is already flattened and permuted from dataset
-        images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
-        # Unpack the tuple: states is (batch, time, units), _ is the list of layers
-        states, _ = model(images)
-        
-        # Take the last timestep of the sequence
-        output = states[:, -1, :]
-        activations.append(output.cpu())
-        ys.append(labels)
-    activations = torch.cat(activations, dim=0).numpy()
-    activations = scaler.transform(activations)
-    ys = torch.cat(ys, dim=0).numpy()
-    return classifier.score(activations, ys)
-
-
-device = (
-    torch.device("cuda")
-    if torch.cuda.is_available() and not args.cpu
-    else torch.device("cpu")
+assert os.path.exists(args.resultroot), (
+	f"{args.resultroot} folder does not exist, please create it and run the script again."
 )
+assert 1.0 > args.sparsity >= 0.0, "Sparsity in [0, 1)"
+
+device = torch.device("cuda") if torch.cuda.is_available() and not args.cpu else torch.device("cpu")
 print("Using device:", device)
-print(f"Running {args.trials} trial(s)")
-print(f"Permutation seed: {args.seed}")
 
-n_inp = 1  # Sequential input (one pixel at a time)
-n_out = 10  # 10 classes
-
+n_inp = 1
 gamma = (args.gamma - args.gamma_range / 2.0, args.gamma + args.gamma_range / 2.0)
-epsilon = (
-    args.epsilon - args.epsilon_range / 2.0,
-    args.epsilon + args.epsilon_range / 2.0,
+epsilon = (args.epsilon - args.epsilon_range / 2.0, args.epsilon + args.epsilon_range / 2.0)
+
+# Data loaders (psMNIST uses a fixed permutation; keep seed consistent with search)
+train_loader, valid_loader, test_loader = get_psmnist_data(
+	root=args.dataroot, bs_train=args.batch, bs_test=args.batch, seed=args.seed
 )
 
 train_accs, valid_accs, test_accs = [], [], []
 
-for trial in range(args.trials):
-    print(f"\n{'='*60}")
-    print(f"Trial {trial + 1}/{args.trials}")
-    print(f"{'='*60}")
-    
-    set_seed(args.seed + trial)
+for _ in range(args.trials):
+	if args.esn:
+		units_per_layer = args.n_hid // args.n_layers
+		model = DeepReservoir(
+			input_size=n_inp,
+			tot_units=args.n_hid,
+			n_layers=args.n_layers,
+			spectral_radius=args.rho,
+			input_scaling=args.inp_scaling,
+			inter_scaling=args.inp_scaling,
+			connectivity_recurrent=units_per_layer,
+			connectivity_input=units_per_layer,
+			connectivity_inter=units_per_layer,
+			leaky=args.leaky,
+			cycle=args.cycle,
+			concat=args.concat,
+			linear=False,
+			epsilon=args.coupling_epsilon,
+			antisymmetric=args.antisymmetric,
+			gamma=args.diffusive_gamma,
+		).to(device)
+	elif args.ron:
+		model = RandomizedOscillatorsNetwork(
+			n_inp=n_inp,
+			n_hid=args.n_hid,
+			dt=args.dt,
+			gamma=gamma,
+			epsilon=epsilon,
+			diffusive_gamma=args.diffusive_gamma,
+			rho=args.rho,
+			input_scaling=args.inp_scaling,
+			topology=args.topology,
+			sparsity=args.sparsity,
+			reservoir_scaler=args.reservoir_scaler,
+			device=device,
+			cycle=args.cycle,
+			antisymmetric_coupling=args.antisymmetric,
+			coupling_epsilon=args.coupling_epsilon,
+		).to(device)
+	elif args.pron:
+		model = PhysicallyImplementableRandomizedOscillatorsNetwork(
+			n_inp,
+			args.n_hid,
+			args.dt,
+			gamma,
+			epsilon,
+			args.inp_scaling,
+			device=device,
+		).to(device)
+	elif args.mspron:
+		model = MultistablePhysicallyImplementableRandomizedOscillatorsNetwork(
+			n_inp,
+			args.n_hid,
+			args.dt,
+			gamma,
+			epsilon,
+			args.inp_scaling,
+			device=device,
+		).to(device)
+	elif args.deepron:
+		model = DeepRandomizedOscillatorsNetwork(
+			n_inp=n_inp,
+			total_units=args.n_hid,
+			dt=args.dt,
+			gamma=gamma,
+			epsilon=epsilon,
+			n_layers=args.n_layers,
+			diffusive_gamma=args.diffusive_gamma,
+			rho=args.rho,
+			input_scaling=args.inp_scaling,
+			inter_scaling=args.inp_scaling,
+			topology=args.topology,
+			sparsity=args.sparsity,
+			reservoir_scaler=args.reservoir_scaler,
+			device=device,
+			antisymmetric_coupling=args.antisymmetric,
+			coupling_epsilon=args.coupling_epsilon,
+			concat=args.concat,
+			cycle=args.cycle,
+		).to(device)
+	else:
+		raise ValueError("Select one model flag: --esn, --ron, --pron, --mspron, or --deepron")
 
-    # Create model based on args
-    if args.esn:
-        units_per_layer = args.n_hid // args.n_layers
-        model = DeepReservoir(
-            input_size=n_inp,
-            tot_units=args.n_hid,
-            spectral_radius=args.rho,
-            input_scaling=args.inp_scaling,
-            n_layers=args.n_layers,
-            inter_scaling=args.inp_scaling,
-            connectivity_recurrent=units_per_layer,
-            connectivity_input=units_per_layer,
-            connectivity_inter=units_per_layer,
-            leaky=args.leaky,
-            cycle=args.cycle,
-            concat=args.concat,
-            linear=False,
-            antisymmetric=args.antisymmetric,
-            epsilon=args.coupling_epsilon,
-            gamma=args.diffusive_gamma,
-        ).to(device)
-    elif args.ron:
-        model = RandomizedOscillatorsNetwork(
-            n_inp=n_inp,
-            n_hid=args.n_hid,
-            dt=args.dt,
-            gamma=gamma,
-            epsilon=epsilon,
-            input_scaling=args.inp_scaling,
-            rho=args.rho,
-            topology=args.topology,
-            sparsity=args.sparsity,
-            reservoir_scaler=args.reservoir_scaler,
-            device=device,
-            antisymmetric_coupling=args.antisymmetric,
-            coupling_epsilon=args.coupling_epsilon,
-        ).to(device)
-    elif args.pron:
-        model = PhysicallyImplementableRandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.inp_scaling,
-            device=device,
-        ).to(device)
-    elif args.mspron:
-        model = MultistablePhysicallyImplementableRandomizedOscillatorsNetwork(
-            n_inp,
-            args.n_hid,
-            args.dt,
-            gamma,
-            epsilon,
-            args.inp_scaling,
-            device=device,
-        ).to(device)
-    elif args.deepron:
-        model = DeepRandomizedOscillatorsNetwork(
-            n_inp=n_inp,
-            total_units=args.n_hid,
-            dt=args.dt,
-            gamma=gamma,
-            epsilon=epsilon,
-            n_layers=args.n_layers,
-            diffusive_gamma=args.diffusive_gamma,
-            rho=args.rho,
-            input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
-            device=device,
-            antisymmetric_coupling=args.antisymmetric,
-            coupling_epsilon=args.coupling_epsilon,
-            cycle=args.cycle,
-            concat=args.concat,
-        ).to(device)
-    else:
-        raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
+	total_params, reservoir_params, trainable_params = count_parameters(model)
+	print("\n" + "=" * 60)
+	print("MODEL PARAMETERS")
+	print("=" * 60)
+	print(f"Total parameters:      {total_params:,}")
+	print(f"Reservoir parameters:  {reservoir_params:,}")
+	print(f"Trainable parameters:  {trainable_params:,}")
+	print("=" * 60 + "\n")
 
-    # Count and display parameters
-    total_params, reservoir_params, trainable_params = count_parameters(model)
-    print(f"\n{'='*60}")
-    print("MODEL PARAMETERS")
-    print(f"{'='*60}")
-    print(f"Total parameters:      {total_params:,}")
-    print(f"Reservoir parameters:  {reservoir_params:,}")
-    print(f"Trainable parameters:  {trainable_params:,}")
-    print(f"{'='*60}")
+	activations, ys = [], []
+	for images, labels in tqdm(train_loader):
+		images = images.to(device)
+		images = images.unsqueeze(-1)
+		states, _ = model(images)
+		output = states[:, -1, :]
+		activations.append(output.cpu())
+		ys.append(labels)
 
-    # Load psMNIST data
-    print("\nLoading permuted sequential MNIST dataset...")
-    train_loader, valid_loader, test_loader = get_psmnist_data(
-        args.dataroot, args.batch, args.batch, seed=args.seed
-    )
+	activations = torch.cat(activations, dim=0).numpy()
+	ys = torch.cat(ys, dim=0).numpy()
 
-    # Extract reservoir activations and train readout
-    print("Extracting training activations...")
-    activations, ys = [], []
-    for images, labels in tqdm(train_loader, desc="Training"):
-        if hasattr(model, "reset_state"):
-            model.reset_state()
-        elif hasattr(model, "reset"):
-            model.reset()
-        images = images.to(device)
-        # Data is already flattened and permuted from dataset
-        images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
-        # Unpack the tuple just like you did in the test function
-        states, _ = model(images)
-        
-        # Take the last timestep of the sequence
-        output = states[:, -1, :]
-        activations.append(output.cpu())
-        ys.append(labels)
-    
-    activations = torch.cat(activations, dim=0).numpy()
-    ys = torch.cat(ys, dim=0).squeeze().numpy()
-    
-    print("Training readout classifier...")
-    scaler = preprocessing.StandardScaler().fit(activations)
-    activations = scaler.transform(activations)
-    classifier = LogisticRegression(max_iter=1000, verbose=0).fit(activations, ys)
-    
-    # take classifier number of params
-    clf_params = sum(p.numel() for p in classifier.coef_) + sum(p.numel() for p in classifier.intercept_)
-    print(f"Classifier parameters (logistic regression): {clf_params:,}")
-    
-    # Evaluate
-    print("Evaluating...")
-    train_acc = test(train_loader, classifier, scaler)
-    valid_acc = test(valid_loader, classifier, scaler) if not args.use_test else 0.0
-    test_acc = test(test_loader, classifier, scaler) if args.use_test else 0.0
-    
-    train_accs.append(train_acc)
-    valid_accs.append(valid_acc)
-    test_accs.append(test_acc)
-    
-    print(f"Train Acc: {train_acc:.4f}")
-    print(f"Valid Acc: {valid_acc:.4f}")
-    print(f"Test Acc: {test_acc:.4f}")
+	scaler = preprocessing.StandardScaler().fit(activations)
+	activations = scaler.transform(activations)
+	classifier = LogisticRegression(max_iter=1000).fit(activations, ys)
 
-# Save results
+	readout_params = count_logreg_params(classifier)
+	print(f"Readout (LogisticRegression) parameters: {readout_params}")
+
+	train_acc = evaluate(train_loader, model, classifier, scaler, device)
+	valid_acc = evaluate(valid_loader, model, classifier, scaler, device) if not args.use_test else 0.0
+	test_acc = evaluate(test_loader, model, classifier, scaler, device) if args.use_test else 0.0
+
+	train_accs.append(train_acc)
+	valid_accs.append(valid_acc)
+	test_accs.append(test_acc)
+
+
 if args.ron:
-    filename = f"psMNIST_log_RON_{args.topology}{args.resultsuffix}.txt"
+	logfile = os.path.join(args.resultroot, f"psMNIST_log_RON_{args.topology}{args.resultsuffix}.txt")
 elif args.pron:
-    filename = f"psMNIST_log_PRON{args.resultsuffix}.txt"
+	logfile = os.path.join(args.resultroot, f"psMNIST_log_PRON{args.resultsuffix}.txt")
 elif args.mspron:
-    filename = f"psMNIST_log_MSPRON{args.resultsuffix}.txt"
+	logfile = os.path.join(args.resultroot, f"psMNIST_log_MSPRON{args.resultsuffix}.txt")
 elif args.esn:
-    filename = f"psMNIST_log_ESN{args.resultsuffix}.txt"
+	logfile = os.path.join(args.resultroot, f"psMNIST_log_ESN{args.resultsuffix}.txt")
 elif args.deepron:
-    filename = f"psMNIST_log_DEEPRON{args.resultsuffix}.txt"
+	logfile = os.path.join(args.resultroot, f"psMNIST_log_DEEPRON{args.resultsuffix}.txt")
 else:
-    filename = f"psMNIST_log{args.resultsuffix}.txt"
+	raise ValueError("Wrong model choice.")
 
-filepath = os.path.join(args.resultroot, filename)
-with open(filepath, "a") as f:
-    ar = ""
-    for k, v in vars(args).items():
-        ar += f"{str(k)}: {str(v)}, "
-    ar += (
-        f"train: {[str(round(train_acc, 4)) for train_acc in train_accs]} "
-        f"valid: {[str(round(valid_acc, 4)) for valid_acc in valid_accs]} "
-        f"test: {[str(round(test_acc, 4)) for test_acc in test_accs]} "
-        f"mean/std train: {np.mean(train_accs):.4f}±{np.std(train_accs):.4f} "
-        f"mean/std valid: {np.mean(valid_accs):.4f}±{np.std(valid_accs):.4f} "
-        f"mean/std test: {np.mean(test_accs):.4f}±{np.std(test_accs):.4f}"
-    )
-    # Add spectral info if available
-    if 'spectral_info' in locals():
-        ar += spectral_info
-    f.write(ar + "\n")
+ar = ""
+for k, v in vars(args).items():
+	ar += f"{str(k)}: {str(v)}, "
+ar += (
+	f"train: {[str(round(train_acc, 4)) for train_acc in train_accs]} "
+	f"valid: {[str(round(valid_acc, 4)) for valid_acc in valid_accs]} "
+	f"test: {[str(round(test_acc, 4)) for test_acc in test_accs]} "
+	f"mean/std train: {(np.mean(train_accs), np.std(train_accs))} "
+	f"mean/std valid: {(np.mean(valid_accs), np.std(valid_accs))} "
+	f"mean/std test: {(np.mean(test_accs), np.std(test_accs))}"
+)
 
-print(f"\nResults saved to: {filepath}")
-print(f"\n{'='*60}")
+with open(logfile, "a") as f:
+	f.write(ar + "\n")
+
+print("\n" + "=" * 60)
 print("Final Results Summary:")
-print(f"{'='*60}")
+print("=" * 60)
 print(f"Train: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
 print(f"Valid: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
 print(f"Test:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
-print(f"{'='*60}")
+print("=" * 60)
