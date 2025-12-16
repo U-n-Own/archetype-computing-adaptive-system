@@ -124,11 +124,12 @@ def evaluate(model, data_loader, clf, scaler, preprocess_fn):
 # -------------------------------------------------------------
 # Objective Function
 # -------------------------------------------------------------
-def objective(trial, arch, dataset_name, model_type="esn"):
+def objective(trial, arch, dataset_name, model_type="esn", multi=None):
     input_size = 1  # Default input size for npcifar10; adjust as needed per dataset
-    
+
     # Handle cycle_zero architecture variant
     zero_recurrence = False
+    
     if arch == "cycle_zero":
         real_arch = "cycle"
         zero_recurrence = True
@@ -138,47 +139,95 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     # 1. Configure constraints
     if real_arch == "baseline":
         n_layers_opts = [1]
-    # n_hid will be set dynamically below
     elif real_arch == "baseline_deep":
-            n_layers_opts = [5, 10]
+        n_layers_opts = [5, 10]
     elif real_arch in ["cycle", "antisymmetric"]:
         n_layers_opts = [5, 10]
 
+    # Single-layer for shallow RON to avoid undefined cycle kernels
+    if model_type == "ron":
+        n_layers_opts = [1]
+
     n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
-    
+    if model_type == "ron":
+        n_layers = 1
+
     if dataset_name == "mnist" or dataset_name == "psmnist":
         input_size = 1
     elif dataset_name == "npcifar10":
         input_size = 96
-    
-    n_hid = get_units_for_target_params(architecture=real_arch, n_layers=n_layers, target_params=100_000, input_size=input_size, zero_recurrence=zero_recurrence) 
-    # 2. Hyperparameters
+
+    n_hid = get_units_for_target_params(
+        architecture=real_arch,
+        n_layers=n_layers,
+        target_params=100_000,
+        input_size=input_size,
+        zero_recurrence=zero_recurrence,
+    )
+
+    cycle_flag = real_arch == "cycle"
+    antisymmetric_flag = real_arch == "antisymmetric"
+    topology_choices = ["full", "orthogonal", "antisymmetric"]
+    if antisymmetric_flag:
+        topology_choices = ["antisymmetric"]
+    elif real_arch in ["baseline", "baseline_deep", "cycle", "cycle_zero"]:
+        topology_choices = ["full", "orthogonal"]
+
+    # 2. Hyperparameters (model-specific pieces appended below)
     config = {
         "dataset": dataset_name,
         "model": model_type,
-        "arch": arch, # Keep original name for logging
+        "arch": arch,  # Keep original name for logging
         "n_hid": n_hid,
         "n_layers": n_layers,
-        "rho": trial.suggest_float("rho", 0.1, 9, log=True), # Adjusted range usually better for DeepESN
-        "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
-        "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
-        "coupling_epsilon": 20.0, # Consider optimizing this too if antisym
-        "concat": True,
         "batch": 812,
         "seed": 42,
         "dataroot": "./data",
-        "logdir": f"./logs/bayesopt_{dataset_name}_{arch}",
+        "logdir": f"./logs/bayesopt_{model_type}_{dataset_name}_{arch}",
     }
-    
-    # Logic flags
-    cycle_flag = (real_arch == "cycle")
-    antisymmetric_flag = (real_arch == "antisymmetric")
+
+    if model_type == "esn":
+        config.update(
+            {
+                "rho": trial.suggest_float("rho", 0.1, 9, log=True),
+                "inp_scaling": trial.suggest_float("inp_scaling", 0.1, 1, log=True),
+                "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
+                "coupling_epsilon": 20.0,
+                "concat": True,
+                "diffusive_gamma": 0.0,
+            }
+        )
+    elif model_type in {"ron", "deepron"}:
+        config.update(
+            {
+                "dt": trial.suggest_float("dt", 1e-3, 5e-2, log=True),
+                "gamma": trial.suggest_float("gamma", 0.05, 2.0, log=True),
+                "gamma_range": trial.suggest_float("gamma_range", 0.0, 0.5),
+                "epsilon": trial.suggest_float("epsilon", 0.1, 5.0, log=True),
+                "epsilon_range": trial.suggest_float("epsilon_range", 0.0, 2.0),
+                "rho": trial.suggest_float("rho", 0.1, 5.0, log=True),
+                "inp_scaling": trial.suggest_float("inp_scaling", 0.05, 2.0, log=True),
+                "topology": trial.suggest_categorical("topology", topology_choices),
+                "sparsity": trial.suggest_float("sparsity", 0.0, 0.5),
+                "reservoir_scaler": trial.suggest_float("reservoir_scaler", 0.0, 1.0),
+                "coupling_epsilon": trial.suggest_float(
+                    "coupling_epsilon", 0.01, 5.0, log=True
+                ),
+                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0, 0.1),
+                "concat": True,
+            }
+        )
+        if model_type == "deepron":
+            config["inter_scaling"] = trial.suggest_float(
+                "inter_scaling", 0.05, 2.0, log=True
+            )
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
     # 3. Load Data & Config
     set_seed(config["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # [ELEGANCE] Retrieve loaders AND the specific preprocessing function
+
     (train_loader, valid_loader, test_loader), input_dim, preprocess_fn = get_data_config(
         config["dataset"], config["dataroot"], config["batch"], config["seed"], device
     )
@@ -187,9 +236,9 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     if config["model"] == "esn":
         units_per_layer = config["n_hid"] // config["n_layers"]
         connectivity_recurrent = 0 if zero_recurrence else units_per_layer
-        
+
         model = DeepReservoir(
-            input_size=input_dim, # Dynamic based on dataset
+            input_size=input_dim,
             tot_units=config["n_hid"],
             n_layers=config["n_layers"],
             spectral_radius=config["rho"],
@@ -204,6 +253,63 @@ def objective(trial, arch, dataset_name, model_type="esn"):
             linear=False,
             epsilon=config["coupling_epsilon"],
             antisymmetric=antisymmetric_flag,
+            gamma=config["diffusive_gamma"],
+        ).to(device)
+    elif config["model"] == "ron":
+        gamma = (
+            config["gamma"] - config["gamma_range"] / 2.0,
+            config["gamma"] + config["gamma_range"] / 2.0,
+        )
+        epsilon = (
+            config["epsilon"] - config["epsilon_range"] / 2.0,
+            config["epsilon"] + config["epsilon_range"] / 2.0,
+        )
+        model = RandomizedOscillatorsNetwork(
+            n_inp=input_dim,
+            n_hid=config["n_hid"],
+            dt=config["dt"],
+            gamma=gamma,
+            epsilon=epsilon,
+            diffusive_gamma=config["diffusive_gamma"],
+            rho=config["rho"],
+            input_scaling=config["inp_scaling"],
+            topology=config["topology"],
+            sparsity=config["sparsity"],
+            reservoir_scaler=config["reservoir_scaler"],
+            device=device,
+            linear=False,
+            cycle=False,  # single-layer RON lacks cycle kernels
+            antisymmetric_coupling=antisymmetric_flag,
+            coupling_epsilon=config["coupling_epsilon"],
+        ).to(device)
+    elif config["model"] == "deepron":
+        gamma = (
+            config["gamma"] - config["gamma_range"] / 2.0,
+            config["gamma"] + config["gamma_range"] / 2.0,
+        )
+        epsilon = (
+            config["epsilon"] - config["epsilon_range"] / 2.0,
+            config["epsilon"] + config["epsilon_range"] / 2.0,
+        )
+        model = DeepRandomizedOscillatorsNetwork(
+            n_inp=input_dim,
+            total_units=config["n_hid"],
+            dt=config["dt"],
+            gamma=gamma,
+            epsilon=epsilon,
+            n_layers=config["n_layers"],
+            diffusive_gamma=config["diffusive_gamma"],
+            rho=config["rho"],
+            input_scaling=config["inp_scaling"],
+            inter_scaling=config.get("inter_scaling", config["inp_scaling"]),
+            device=device,
+            antisymmetric_coupling=antisymmetric_flag,
+            coupling_epsilon=config["coupling_epsilon"],
+            cycle=cycle_flag,
+            concat=config["concat"],
+            topology=config["topology"],
+            sparsity=config["sparsity"],
+            reservoir_scaler=config["reservoir_scaler"],
         ).to(device)
     else:
         raise ValueError("Model type not supported here.")
@@ -239,35 +345,52 @@ def objective(trial, arch, dataset_name, model_type="esn"):
     log_record["reservoir_params"] = reservoir_params
     log_record["readout_params"] = readout_params
     log_record["total_params"] = total_params + readout_params
-    if multi == True:
-        log_file = os.path.join(config["logdir"], f"trial_log_multi_{dataset_name}_{arch}.jsonl")
+
+    # Support both the legacy `multi` flag and the newer `MULTI_MODE` global.
+    multi_mode = MULTI_MODE if multi is None else bool(multi)
+    if multi_mode:
+        log_file = os.path.join(
+            config["logdir"], f"trial_log_multi_{dataset_name}_{arch}_{model_type}.jsonl"
+        )
     else:
-        log_file = os.path.join(config["logdir"], "trial_log.jsonl")
+        log_file = os.path.join(config["logdir"], f"trial_log_{model_type}.jsonl")
     with open(log_file, "a") as f:
         f.write(json.dumps(log_record) + "\n")
 
     return valid_acc
 
+MULTI_MODE = False
+
 if __name__ == "__main__":
-    multi = False 
-    # List of datasets to run
+    models_env = os.environ.get("BAYESIAN_MODELS")
+    model_types = (
+        [m.strip() for m in models_env.split(",") if m.strip()]
+        if models_env
+        else ["esn", "ron", "deepron"]
+    )
+    n_trials = int(os.environ.get("BAYESIAN_N_TRIALS", "100"))
+
+    MULTI_MODE = len(model_types) > 1
     DATASETS = ["mnist", "psmnist", "npcifar10"]
     architectures = ["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
 
     for dataset in DATASETS:
         for arch in architectures:
-            print(f"\n=== Optimizing {arch} on {dataset} ===")
+            for model_type in model_types:
+                print(f"\n=== Optimizing {model_type} | {arch} on {dataset} ===")
 
-            study = optuna.create_study(
-                direction="maximize",
-                sampler=optuna.samplers.TPESampler(seed=42), 
-                study_name=f"{dataset}_{arch}"
-            )
+                study = optuna.create_study(
+                    direction="maximize",
+                    sampler=optuna.samplers.TPESampler(seed=42),
+                    study_name=f"{dataset}_{arch}_{model_type}",
+                )
 
-            study.optimize(
-                lambda trial: objective(trial, arch, dataset, model_type="esn"),
-                n_trials=100,
-                show_progress_bar=True,
-            )
+                study.optimize(
+                    lambda trial, m=model_type, a=arch, d=dataset: objective(
+                        trial, a, d, model_type=m
+                    ),
+                    n_trials=n_trials,
+                    show_progress_bar=True,
+                )
 
-            print("\nBest:", study.best_params, "Acc:", study.best_value)
+                print("\nBest:", study.best_params, "Acc:", study.best_value)
