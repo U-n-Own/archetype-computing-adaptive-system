@@ -95,9 +95,15 @@ assert 1.0 > args.sparsity >= 0.0, "Sparsity must be in [0, 1)"
 
 @torch.no_grad()
 def test(data_loader, classifier, scaler):
+    
+    
     """Evaluate model performance on a dataset."""
     activations, ys = [], []
     for images, labels in tqdm(data_loader, desc="Testing"):
+        if hasattr(model, "reset_state"):
+            model.reset_state()
+        elif hasattr(model, "reset"):
+            model.reset()
         images = images.to(device)
         # Data is already flattened and permuted from dataset
         images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
@@ -239,6 +245,10 @@ for trial in range(args.trials):
     print("Extracting training activations...")
     activations, ys = [], []
     for images, labels in tqdm(train_loader, desc="Training"):
+        if hasattr(model, "reset_state"):
+            model.reset_state()
+        elif hasattr(model, "reset"):
+            model.reset()
         images = images.to(device)
         # Data is already flattened and permuted from dataset
         images = images.unsqueeze(-1)  # (batch, 784) -> (batch, 784, 1)
@@ -257,6 +267,10 @@ for trial in range(args.trials):
     scaler = preprocessing.StandardScaler().fit(activations)
     activations = scaler.transform(activations)
     classifier = LogisticRegression(max_iter=1000, verbose=0).fit(activations, ys)
+    
+    # take classifier number of params
+    clf_params = sum(p.numel() for p in classifier.coef_) + sum(p.numel() for p in classifier.intercept_)
+    print(f"Classifier parameters (logistic regression): {clf_params:,}")
     
     # Evaluate
     print("Evaluating...")
