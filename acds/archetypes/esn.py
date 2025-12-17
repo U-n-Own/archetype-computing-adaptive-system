@@ -173,7 +173,7 @@ class ReservoirCell(torch.nn.Module):
             # Matrix should be square with dimension equal to the number of units
             C_base = sparse_tensor_init(self.units, self.units, self.connectivity_recurrent)
             # Scale the coupling matrix to have spectral radius 1.0 before epsilon scaling
-            C_base = spectral_norm_scaling(C_base, 1.0)
+            #C_base = spectral_norm_scaling(C_base, 1.0)
             self.C_coupling = nn.Parameter(C_base, requires_grad=False)
             
             # For convenience, also store -C^T
