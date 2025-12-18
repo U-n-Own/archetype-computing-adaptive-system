@@ -180,7 +180,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         "arch": arch,  # Keep original name for logging
         "n_hid": n_hid,
         "n_layers": n_layers,
-        "batch": 812,
+        "batch": 1024,
         "seed": 42,
         "dataroot": "./data",
         "logdir": f"./logs/bayesopt_{model_type}_{dataset_name}_{arch}",
@@ -194,7 +194,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
                 "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
                 "coupling_epsilon": 20.0,
                 "concat": True,
-                "diffusive_gamma": 0.0,
+                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0, 0.5, log=True),
             }
         )
     elif model_type in {"ron", "deepron"}:
@@ -362,7 +362,9 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
 MULTI_MODE = False
 
 if __name__ == "__main__":
+    
     models_env = os.environ.get("BAYESIAN_MODELS")
+    
     model_types = (
         [m.strip() for m in models_env.split(",") if m.strip()]
         if models_env
@@ -372,7 +374,7 @@ if __name__ == "__main__":
 
     MULTI_MODE = len(model_types) > 1
     DATASETS = ["mnist", "psmnist", "npcifar10"]
-    architectures = ["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
+    architectures = ["antisymmetric"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
 
     for dataset in DATASETS:
         for arch in architectures:
