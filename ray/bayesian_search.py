@@ -194,26 +194,24 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
                 "leaky": trial.suggest_float("leaky", 0.001, 1, log=True),
                 "coupling_epsilon": 20.0,
                 "concat": True,
-                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0, 0.5, log=True),
+                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0001, 0.5, log=True),
             }
         )
     elif model_type in {"ron", "deepron"}:
         config.update(
             {
                 "dt": trial.suggest_float("dt", 1e-3, 5e-2, log=True),
-                "gamma": trial.suggest_float("gamma", 0.05, 2.0, log=True),
-                "gamma_range": trial.suggest_float("gamma_range", 0.0, 0.5),
-                "epsilon": trial.suggest_float("epsilon", 0.1, 5.0, log=True),
-                "epsilon_range": trial.suggest_float("epsilon_range", 0.0, 2.0),
+                "gamma": 1,
+                "gamma_range": 0.1,
+                "epsilon": 1,
+                "epsilon_range": 0.1,
                 "rho": trial.suggest_float("rho", 0.1, 5.0, log=True),
                 "inp_scaling": trial.suggest_float("inp_scaling", 0.05, 2.0, log=True),
-                "topology": trial.suggest_categorical("topology", topology_choices),
-                "sparsity": trial.suggest_float("sparsity", 0.0, 0.5),
                 "reservoir_scaler": trial.suggest_float("reservoir_scaler", 0.0, 1.0),
                 "coupling_epsilon": trial.suggest_float(
                     "coupling_epsilon", 0.01, 5.0, log=True
                 ),
-                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0, 0.1),
+                "diffusive_gamma": trial.suggest_float("diffusive_gamma", 0.0001, 0.5, log=True),
                 "concat": True,
             }
         )
