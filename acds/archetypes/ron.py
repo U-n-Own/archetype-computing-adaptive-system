@@ -59,6 +59,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         cycle: bool = False,
         antisymmetric_coupling: bool = False,
         coupling_epsilon: float = 0.1,
+        coupling_gamma: float = 0.0,
     ):
         """Initialize the RON model.
 
@@ -85,6 +86,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
             cycle (bool): Whether to use cycle connections between layers.
             antisymmetric_coupling (bool): Whether to use antisymmetric coupling between layers.
             coupling_epsilon (float): Coupling strength for antisymmetric connections.
+            coupling_gamma (float): Diffusion coefficient for antisymmetric connections. Defaults to 0.
         """
         super().__init__()
         self.n_hid = n_hid
@@ -93,6 +95,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         self.cycle = cycle
         self.antisymmetric_coupling = antisymmetric_coupling
         self.coupling_epsilon = coupling_epsilon
+        self.coupling_gamma = coupling_gamma
         self.diffusive_matrix = diffusive_gamma * torch.eye(n_hid).to(device)
         self.linear = linear
         if isinstance(gamma, tuple):
@@ -170,6 +173,9 @@ class RandomizedOscillatorsNetwork(nn.Module):
         
         # Add antisymmetric coupling 
         if self.antisymmetric_coupling:
+            # Add diffusion term -gamma * h_prev (like ESN)
+            diffusion_term = self.coupling_gamma * hy
+            
             # Backward coupling: C * h_{l-1}^{(t-1)}
             if h_prev_layer is not None and self.C_coupling is not None:
                 if h_prev_layer.shape[1] == self.C_coupling.shape[0]:
@@ -182,9 +188,9 @@ class RandomizedOscillatorsNetwork(nn.Module):
                     forward_coupling = torch.matmul(h_next_layer.to(dtype=x.dtype), self.C_coupling_T_neg.to(dtype=x.dtype))
                     antisymmetric_part = antisymmetric_part + forward_coupling
             
-            #!TODO Scale by coupling epsilon and clamp to prevent extreme values, need testing
-            # Antisym contribution = (-forward + backward)* coupling_epsilon
-            antisymmetric_contribution = self.coupling_epsilon * antisymmetric_part
+            # Scale by coupling epsilon and clamp to prevent extreme values
+            # Antisym contribution = epsilon * (backward - forward) - gamma * h
+            antisymmetric_contribution = self.coupling_epsilon * antisymmetric_part - diffusion_term
             antisymmetric_contribution = torch.clamp(antisymmetric_contribution, min=-10.0, max=10.0)
         else:
             antisymmetric_contribution = 0
@@ -292,6 +298,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         linear: bool = False,
         antisymmetric_coupling: bool = False,
         coupling_epsilon: float = 0.1,
+        coupling_gamma: float = 0.0,
     ):
         """Initialize the DeepRON model.
 
@@ -313,6 +320,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         self.linear = linear
         self.antisymmetric_coupling = antisymmetric_coupling
         self.coupling_epsilon = coupling_epsilon
+        self.coupling_gamma = coupling_gamma
         
         self.concat = concat
 
@@ -338,6 +346,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     antisymmetric_coupling=antisymmetric_coupling,
                                     linear = self.linear,
                                     coupling_epsilon=coupling_epsilon,
+                                    coupling_gamma=coupling_gamma,
                                     device=device, 
             )
         ]
@@ -363,6 +372,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     linear=self.linear,
                     antisymmetric_coupling=antisymmetric_coupling,
                     coupling_epsilon=coupling_epsilon,
+                    coupling_gamma=coupling_gamma,
                     device=device, 
                     #connectivity_input=connectivity_input_others,
                     #connectivity_recurrent=connectivity_recurrent,
@@ -481,11 +491,14 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                 for i, ron_layer in enumerate(self.ron_reservoir):
                     # Get previous layer's output for ring connection
                     if i == 0:
-                        # First layer gets feedback from last layer (closing the ring)
+                        if(len(self.ron_reservoir) > 1):
+                            prev_layer_output = h_states[-1]  # From last layer
+                        else:
+                            prev_layer_output = torch.zeros(batch_size, ron_layer.n_hid, device=x.device)
                         prev_layer_output = h_states[-1] if len(self.ron_reservoir) > 1 else torch.zeros(batch_size, ron_layer.n_hid, device=x.device)
                     else:
-                        prev_layer_output = h_states[i-1]
-                    
+                        # Here if other layers we want the cycle matrix multiply the current timestep output of previous layer
+                        prev_layer_output = new_h_states[-1]
                     # All layers receive cycle input (ring topology)
                     new_h, new_hz = ron_layer.cell(
                         current_input,
