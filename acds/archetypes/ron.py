@@ -124,7 +124,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         h2h = h2h.to(device)
         self.h2h = nn.Parameter(h2h, requires_grad=False)
         
-        x2h = torch.rand(n_inp, n_hid, device=device) * input_scaling
+        x2h = (torch.rand(n_inp, n_hid, device=device)* 2 - 1) * input_scaling
         self.x2h = nn.Parameter(x2h, requires_grad=False)
         bias = (torch.rand(n_hid, device=device) * 2 - 1) * input_scaling
         self.bias = nn.Parameter(bias, requires_grad=False)
