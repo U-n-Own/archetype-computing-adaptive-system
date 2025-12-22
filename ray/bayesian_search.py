@@ -138,7 +138,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         real_arch = arch
 
     # 1. Configure constraints
-    n_layers_opts = [1] # Default to avoid UnboundLocalError
+    #n_layers_opts = [1] # Default to avoid UnboundLocalError
     if real_arch == "baseline":
         n_layers_opts = [1]
     elif real_arch == "baseline_deep":
@@ -202,14 +202,13 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
     elif model_type in {"ron", "deepron"}:
         config.update(
             {
-                "dt": trial.suggest_float("dt", 1e-3, 5e-2, log=True),
+                "dt": trial.suggest_float("dt", 1e-4, 1, log=True),
                 "gamma": 1,
                 "gamma_range": 0.1,
                 "epsilon": 1,
                 "epsilon_range": 0.1,
-                "rho": trial.suggest_float("rho", 0.1, 5.0, log=True),
+                "rho": trial.suggest_float("rho", 0.1, 9.0, log=True),
                 "inp_scaling": trial.suggest_float("inp_scaling", 0.05, 2.0, log=True),
-                "reservoir_scaler": trial.suggest_float("reservoir_scaler", 0.0, 1.0),
                 "coupling_epsilon": trial.suggest_float(
                     "coupling_epsilon", 0.01, 5.0, log=True
                 ),
@@ -218,9 +217,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
             }
         )
         if model_type == "deepron":
-            config["inter_scaling"] = trial.suggest_float(
-                "inter_scaling", 0.05, 2.0, log=True
-            )
+            config["inter_scaling"] = 0
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -273,9 +270,6 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
             diffusive_gamma=config["diffusive_gamma"],
             rho=config["rho"],
             input_scaling=config["inp_scaling"],
-            topology=config["topology"],
-            sparsity=config["sparsity"],
-            reservoir_scaler=config["reservoir_scaler"],
             device=device,
             linear=False,
             cycle=False,  # single-layer RON lacks cycle kernels
@@ -307,9 +301,6 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
             coupling_epsilon=config["coupling_epsilon"],
             cycle=cycle_flag,
             concat=config["concat"],
-            topology=config["topology"],
-            sparsity=config["sparsity"],
-            reservoir_scaler=config["reservoir_scaler"],
         ).to(device)
     else:
         raise ValueError("Model type not supported here.")
@@ -376,7 +367,7 @@ if __name__ == "__main__":
 
         MULTI_MODE = len(model_types) > 1
         DATASETS = ["mnist", "psmnist", "npcifar10"]
-        architectures = ["antisymmetric"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
+        architectures = ["antisymmetric, cycle, cycle_zero"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
 
         for dataset in DATASETS:
             for arch in architectures:
