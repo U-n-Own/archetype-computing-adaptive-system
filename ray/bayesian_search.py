@@ -138,6 +138,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         real_arch = arch
 
     # 1. Configure constraints
+    n_layers_opts = [1] # Default to avoid UnboundLocalError
     if real_arch == "baseline":
         n_layers_opts = [1]
     elif real_arch == "baseline_deep":
