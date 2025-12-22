@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import torch
 import torch.nn.utils
+from codecarbon import EmissionsTracker
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
@@ -18,6 +19,8 @@ from acds.archetypes import (
 )
 from acds.benchmarks import get_psmnist_data
 
+tracker = EmissionsTracker(project_name="psmnist_experiment", output_dir="./logs/emissions")
+tracker.start()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -286,3 +289,4 @@ print(f"Train: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
 print(f"Valid: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
 print(f"Test:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
 print("=" * 60)
+tracker.stop()

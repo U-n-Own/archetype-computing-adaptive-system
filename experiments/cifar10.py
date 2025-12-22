@@ -20,6 +20,7 @@ import warnings
 import numpy as np
 import torch
 import torch.nn.utils
+from codecarbon import EmissionsTracker
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
@@ -33,6 +34,9 @@ from acds.archetypes import (
     MultistablePhysicallyImplementableRandomizedOscillatorsNetwork,
 )
 from acds.benchmarks import get_cifar10_data
+
+tracker = EmissionsTracker(project_name="cifar10_experiment", output_dir="./logs/emissions")
+tracker.start()
 
 
 def count_parameters(model):
@@ -372,3 +376,4 @@ print(f"Train: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
 print(f"Valid: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
 print(f"Test:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
 print(f"{'='*60}")
+tracker.stop()

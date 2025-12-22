@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import optuna
+from codecarbon import EmissionsTracker
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from tools.esn_param_match import get_units_for_target_params 
@@ -360,37 +361,41 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
 MULTI_MODE = False
 
 if __name__ == "__main__":
-    
-    models_env = os.environ.get("BAYESIAN_MODELS")
-    
-    model_types = (
-        [m.strip() for m in models_env.split(",") if m.strip()]
-        if models_env
-        else ["esn", "ron", "deepron"]
-    )
-    n_trials = int(os.environ.get("BAYESIAN_N_TRIALS", "100"))
+    tracker = EmissionsTracker(project_name="bayesian_search", output_dir="./logs/emissions")
+    tracker.start()
+    try:
+        models_env = os.environ.get("BAYESIAN_MODELS")
+        
+        model_types = (
+            [m.strip() for m in models_env.split(",") if m.strip()]
+            if models_env
+            else ["esn", "ron", "deepron"]
+        )
+        n_trials = int(os.environ.get("BAYESIAN_N_TRIALS", "100"))
 
-    MULTI_MODE = len(model_types) > 1
-    DATASETS = ["mnist", "psmnist", "npcifar10"]
-    architectures = ["antisymmetric"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
+        MULTI_MODE = len(model_types) > 1
+        DATASETS = ["mnist", "psmnist", "npcifar10"]
+        architectures = ["antisymmetric"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
 
-    for dataset in DATASETS:
-        for arch in architectures:
-            for model_type in model_types:
-                print(f"\n=== Optimizing {model_type} | {arch} on {dataset} ===")
+        for dataset in DATASETS:
+            for arch in architectures:
+                for model_type in model_types:
+                    print(f"\n=== Optimizing {model_type} | {arch} on {dataset} ===")
 
-                study = optuna.create_study(
-                    direction="maximize",
-                    sampler=optuna.samplers.TPESampler(seed=42),
-                    study_name=f"{dataset}_{arch}_{model_type}",
-                )
+                    study = optuna.create_study(
+                        direction="maximize",
+                        sampler=optuna.samplers.TPESampler(seed=42),
+                        study_name=f"{dataset}_{arch}_{model_type}",
+                    )
 
-                study.optimize(
-                    lambda trial, m=model_type, a=arch, d=dataset: objective(
-                        trial, a, d, model_type=m
-                    ),
-                    n_trials=n_trials,
-                    show_progress_bar=True,
-                )
+                    study.optimize(
+                        lambda trial, m=model_type, a=arch, d=dataset: objective(
+                            trial, a, d, model_type=m
+                        ),
+                        n_trials=n_trials,
+                        show_progress_bar=True,
+                    )
 
-                print("\nBest:", study.best_params, "Acc:", study.best_value)
+                    print("\nBest:", study.best_params, "Acc:", study.best_value)
+    finally:
+        tracker.stop()

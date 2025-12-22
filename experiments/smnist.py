@@ -5,6 +5,8 @@ import warnings
 import numpy as np
 import torch.nn.utils
 from sklearn import preprocessing
+# add codecarbon
+from codecarbon import EmissionsTracker
 from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
 from experiments.utils import set_seed
@@ -20,6 +22,9 @@ from acds.archetypes import (
 from acds.benchmarks import get_mnist_data
 
 from typing import List
+
+tracker = EmissionsTracker(project_name="smnist_experiment", output_dir="./logs/emissions")
+tracker.start()
 
 def count_logreg_params(clf):
     n_weights = clf.coef_.size
@@ -312,3 +317,4 @@ print(f"Train: {np.mean(train_accs):.4f} ± {np.std(train_accs):.4f}")
 print(f"Valid: {np.mean(valid_accs):.4f} ± {np.std(valid_accs):.4f}")
 print(f"Test:  {np.mean(test_accs):.4f} ± {np.std(test_accs):.4f}")
 print(f"{'='*60}")
+tracker.stop()
