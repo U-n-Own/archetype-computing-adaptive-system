@@ -138,7 +138,6 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         real_arch = arch
 
     # 1. Configure constraints
-    #n_layers_opts = [1] # Default to avoid UnboundLocalError
     if real_arch == "baseline":
         n_layers_opts = [1]
     elif real_arch == "baseline_deep":
@@ -149,6 +148,8 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
     # Single-layer for shallow RON to avoid undefined cycle kernels
     if model_type == "ron":
         n_layers_opts = [1]
+    if model_type == "deepron":
+        n_layers_opts = [5, 10]
 
     n_layers = trial.suggest_categorical("n_layers", n_layers_opts)
     if model_type == "ron":
@@ -169,11 +170,6 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
 
     cycle_flag = real_arch == "cycle"
     antisymmetric_flag = real_arch == "antisymmetric"
-    topology_choices = ["full", "orthogonal", "antisymmetric"]
-    if antisymmetric_flag:
-        topology_choices = ["antisymmetric"]
-    elif real_arch in ["baseline", "baseline_deep", "cycle", "cycle_zero"]:
-        topology_choices = ["full", "orthogonal"]
 
     # 2. Hyperparameters (model-specific pieces appended below)
     config = {
@@ -367,7 +363,7 @@ if __name__ == "__main__":
 
         MULTI_MODE = len(model_types) > 1
         DATASETS = ["mnist", "psmnist", "npcifar10"]
-        architectures = ["antisymmetric, cycle, cycle_zero"]#["baseline", "cycle", "cycle_zero", "antisymmetric", "baseline_deep"]
+        architectures = ["antisymmetric", "cycle"]#, "cycle_zero"]
 
         for dataset in DATASETS:
             for arch in architectures:
