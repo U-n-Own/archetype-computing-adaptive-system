@@ -60,6 +60,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
         antisymmetric_coupling: bool = False,
         coupling_epsilon: float = 0.1,
         coupling_gamma: float = 0.0,
+        connectivity_recurrent: int = None,
     ):
         """Initialize the RON model.
 
@@ -87,6 +88,7 @@ class RandomizedOscillatorsNetwork(nn.Module):
             antisymmetric_coupling (bool): Whether to use antisymmetric coupling between layers.
             coupling_epsilon (float): Coupling strength for antisymmetric connections.
             coupling_gamma (float): Diffusion coefficient for antisymmetric connections. Defaults to 0.
+            connectivity_recurrent (int): Connectivity of the recurrent matrix. If 0, the recurrent matrix is zeroed.
         """
         super().__init__()
         self.n_hid = n_hid
@@ -120,6 +122,10 @@ class RandomizedOscillatorsNetwork(nn.Module):
         h2h = get_hidden_topology(n_hid, topology, sparsity, reservoir_scaler)
         if topology != 'antisymmetric':
             h2h = spectral_norm_scaling(h2h, rho)
+        
+        if connectivity_recurrent == 0:
+            h2h = torch.zeros_like(h2h)
+
         # Ensure h2h is on the correct device
         h2h = h2h.to(device)
         self.h2h = nn.Parameter(h2h, requires_grad=False)
@@ -299,6 +305,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         antisymmetric_coupling: bool = False,
         coupling_epsilon: float = 0.1,
         coupling_gamma: float = 0.0,
+        connectivity_recurrent: int = None,
     ):
         """Initialize the DeepRON model.
 
@@ -334,7 +341,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         deepron_layers = [
             RandomizedOscillatorsNetwork(
                 n_inp=n_inp, n_hid=self.layer_units + total_units % n_layers,
-                                    input_scaling=input_scaling_others,
+                                    input_scaling=input_scaling,
                                     dt=dt,
                                     rho=rho,
                                     gamma=gamma,
@@ -348,6 +355,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                                     coupling_epsilon=coupling_epsilon,
                                     coupling_gamma=coupling_gamma,
                                     device=device, 
+                                    connectivity_recurrent=connectivity_recurrent,
             )
         ]
             
@@ -356,7 +364,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
         for _ in range(n_layers - 1):
             # In cycle mode, all layers receive the original input
             # In non-cycle mode, layers receive input from previous layer
-            layer_input_size = n_inp if self.cycle else last_h_size
+            layer_input_size = n_inp if (self.cycle and not self.antisymmetric_coupling) else last_h_size
             
             deepron_layers.append(
                 RandomizedOscillatorsNetwork(
@@ -375,7 +383,7 @@ class DeepRandomizedOscillatorsNetwork(nn.Module):
                     coupling_gamma=coupling_gamma,
                     device=device, 
                     #connectivity_input=connectivity_input_others,
-                    #connectivity_recurrent=connectivity_recurrent,
+                    connectivity_recurrent=connectivity_recurrent,
                 )
             )
             last_h_size = self.layer_units
