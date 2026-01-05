@@ -18,6 +18,108 @@ from acds.archetypes import (
     DeepRandomizedOscillatorsNetwork,
 )
 
+def _deepron_last_state(model: DeepRandomizedOscillatorsNetwork, x: torch.Tensor) -> torch.Tensor:
+    """Compute only the last hidden state needed for the readout.
+
+    This avoids materializing the full state tensor shaped [B, T, H], which can
+    easily OOM for DeepRON + many layers + long sequences.
+
+    Supports DeepRON in its main modes (plain, cycle ring, antisymmetric).
+    """
+    batch_size, seq_len, _ = x.shape
+
+    # Initialize hidden states and derivatives for all layers
+    h_states = [torch.zeros(batch_size, layer.n_hid, device=x.device, dtype=x.dtype) for layer in model.ron_reservoir]
+    hz_states = [torch.zeros(batch_size, layer.n_hid, device=x.device, dtype=x.dtype) for layer in model.ron_reservoir]
+
+    if model.antisymmetric_coupling:
+        for t in range(seq_len):
+            new_h_states = []
+            new_hz_states = []
+            for i, ron_layer in enumerate(model.ron_reservoir):
+                if i == 0:
+                    layer_input = x[:, t, :]
+                else:
+                    layer_input = new_h_states[i - 1]
+
+                h_prev_layer = h_states[i - 1] if i > 0 else None
+                h_next_layer = h_states[i + 1] if i < len(model.ron_reservoir) - 1 else None
+
+                new_h, new_hz = ron_layer.cell(
+                    layer_input,
+                    h_states[i],
+                    hz_states[i],
+                    first_layer=(i == 0),
+                    h_last=None,
+                    h_prev_layer=h_prev_layer,
+                    h_next_layer=h_next_layer,
+                )
+                new_h_states.append(new_h)
+                new_hz_states.append(new_hz)
+
+            h_states = new_h_states
+            hz_states = new_hz_states
+
+    elif model.cycle:
+        for t in range(seq_len):
+            current_input = x[:, t, :]
+            new_h_states = []
+            new_hz_states = []
+            for i, ron_layer in enumerate(model.ron_reservoir):
+                if i == 0:
+                    prev_layer_output = (
+                        h_states[-1]
+                        if len(model.ron_reservoir) > 1
+                        else torch.zeros(batch_size, ron_layer.n_hid, device=x.device, dtype=x.dtype)
+                    )
+                else:
+                    prev_layer_output = new_h_states[-1]
+
+                new_h, new_hz = ron_layer.cell(
+                    current_input,
+                    h_states[i],
+                    hz_states[i],
+                    first_layer=True,
+                    h_last=prev_layer_output,
+                )
+                new_h_states.append(new_h)
+                new_hz_states.append(new_hz)
+
+            h_states = new_h_states
+            hz_states = new_hz_states
+
+    else:
+        # Plain stacked DeepRON: stream timesteps and propagate layer outputs.
+        for t in range(seq_len):
+            layer_input = x[:, t, :]
+            new_h_states = []
+            new_hz_states = []
+            for i, ron_layer in enumerate(model.ron_reservoir):
+                new_h, new_hz = ron_layer.cell(
+                    layer_input,
+                    h_states[i],
+                    hz_states[i],
+                    first_layer=(i == 0),
+                    h_last=None,
+                )
+                new_h_states.append(new_h)
+                new_hz_states.append(new_hz)
+                layer_input = new_h
+
+            h_states = new_h_states
+            hz_states = new_hz_states
+
+    if model.concat:
+        return torch.cat(h_states, dim=1)
+    return h_states[-1]
+
+
+def _model_last_activation(model: torch.nn.Module, x: torch.Tensor) -> torch.Tensor:
+    if isinstance(model, DeepRandomizedOscillatorsNetwork):
+        return _deepron_last_state(model, x)
+    states, _ = model(x)
+    return states[:, -1, :]
+
 # -------------------------------------------------------------
 # Helper: Dataset Configuration Strategy
 # -------------------------------------------------------------
@@ -110,8 +212,9 @@ def evaluate(model, data_loader, clf, scaler, preprocess_fn):
 
     for images, labels in data_loader:
         # Use the strategy function for preprocessing
-        states, _ = model(preprocess_fn(images))
-        output = states[:, -1, :]
+        #states, _ = model(preprocess_fn(images))
+        #output = states[:, -1, :]
+        output = _model_last_activation(model, preprocess_fn(images))
         activations.append(output.cpu())
         ys.append(labels)
 
@@ -178,7 +281,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         "arch": arch,  # Keep original name for logging
         "n_hid": n_hid,
         "n_layers": n_layers,
-        "batch": 1024,
+        "batch": 828,
         "seed": 42,
         "dataroot": "./data",
         "logdir": f"./logs/bayesopt_{model_type}_{dataset_name}_{arch}",
@@ -297,20 +400,24 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
             coupling_epsilon=config["coupling_epsilon"],
             cycle=cycle_flag,
             concat=config["concat"],
+	    connectivity_recurrent=0 if zero_recurrence else None,
         ).to(device)
     else:
         raise ValueError("Model type not supported here.")
 
     # 5. Forward Pass (Training)
+    model.eval()
     activations = []
     labels_all = []
 
-    for images, labels in train_loader:
-        # [ELEGANCE] Clean loop, complex logic hidden in preprocess_fn
-        states, _ = model(preprocess_fn(images))
-        out = states[:, -1, :]
-        activations.append(out.cpu())
-        labels_all.append(labels)
+    with torch.no_grad():
+    	for images, labels in train_loader:
+        	# [ELEGANCE] Clean loop, complex logic hidden in preprocess_fn
+        	#states, _ = model(preprocess_fn(images))
+		#out = states[:, -1, :]
+                out = _model_last_activation(model, preprocess_fn(images))
+                activations.append(out.cpu())        	
+                labels_all.append(labels)
 
     activations = torch.cat(activations).numpy()
     y = torch.cat(labels_all).numpy()
@@ -344,12 +451,16 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
     with open(log_file, "a") as f:
         f.write(json.dumps(log_record) + "\n")
 
+    del model
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     return valid_acc
 
 MULTI_MODE = False
 
 if __name__ == "__main__":
-    tracker = EmissionsTracker(project_name="bayesian_search", output_dir="./logs/emissions")
+    tracker = EmissionsTracker(project_name="bayesian_search", output_dir="./logs/emissions", measure_power_secs=180)
     tracker.start()
     try:
         models_env = os.environ.get("BAYESIAN_MODELS")
@@ -362,8 +473,8 @@ if __name__ == "__main__":
         n_trials = int(os.environ.get("BAYESIAN_N_TRIALS", "100"))
 
         MULTI_MODE = len(model_types) > 1
-        DATASETS = ["mnist", "psmnist", "npcifar10"]
-        architectures = ["antisymmetric", "cycle"]#, "cycle_zero"]
+        DATASETS = ["mnist"] 
+        architectures = ["cycle_zero"]#["antisymmetric", "cycle", "cycle_zero"]
 
         for dataset in DATASETS:
             for arch in architectures:
