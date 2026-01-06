@@ -198,6 +198,7 @@ class ReservoirCell(torch.nn.Module):
         """     
         input_part = torch.mm(xt, self.kernel.to(dtype=xt.dtype))
         if self.recurrent_kernel is not None:
+            # W_rec * h^l(t-1)
             state_part = torch.mm(h_prev.to(dtype=xt.dtype), self.recurrent_kernel.to(dtype=(xt.dtype)))
         else:
             state_part = torch.zeros_like(input_part)
@@ -533,6 +534,7 @@ class DeepReservoir(torch.nn.Module):
             layer_states = [[] for _ in range(len(self.reservoir))]
             
             for t in range(seq_len):
+                # u(t)
                 current_input = X[:, t, :]
                 new_hidden_states = []
                 
@@ -541,6 +543,7 @@ class DeepReservoir(torch.nn.Module):
                     if i == 0:
                         # First layer gets feedback from last layer (closing the ring)
                         if len(self.reservoir) > 1:
+                            #h^{(L)}(t-1)
                             prev_layer_output = layer_hidden_states[-1]
                         else:
                             # Single layer: self-feedback from its own previous timestep
@@ -548,6 +551,7 @@ class DeepReservoir(torch.nn.Module):
                             # If this is not none: For 1 layer case we get twice the same state
                             prev_layer_output = None
                     else:
+                        #We update h^{(l-1)}(t-1)
                         prev_layer_output = layer_hidden_states[i-1]
                         #prev_layer_output = new_hidden_states[i-1]
                     
@@ -557,6 +561,8 @@ class DeepReservoir(torch.nn.Module):
                         # TODO Critical change here if we set first_layer=True 
                         # all layers can receive the cycle input, instead if set to 
                         # first_layer = (i == 0) only the first layer receives the cycle input
+                        # Essentially first_layer enables or disables the cycle connection
+                        # Because if first_layer=False for layers > 0, they do not receive h_last input
                         first_layer=True,  # All layers can receive cycle input
                         h_last=prev_layer_output  # Ring connection input
                     )
