@@ -37,7 +37,62 @@ def _load_ucr_txt_as_numpy(root_path: os.PathLike, split: str) -> np.ndarray:
 
     The first column is the 1-based label; remaining columns are the time series.
     """
-    path = Path(root_path) / f"{split}.txt"
+    def _find_split_file() -> Path:
+        root = Path(root_path)
+        dataset_name = root.name
+        suffix = "TRAIN" if split.lower() == "train" else "TEST"
+
+        def _extend_variants(name: str) -> List[str]:
+            base_variants = {name, name.lower(), name.upper(), name.capitalize()}
+            sanitized = name.replace(" ", "").replace("-", "").replace("_", "")
+            base_variants.update({sanitized, sanitized.lower(), sanitized.upper(), sanitized.capitalize()})
+            return [variant for variant in base_variants if variant]
+
+        name_variants = _extend_variants(dataset_name)
+
+        candidate_dirs: List[Path] = [root]
+        parent = root.parent
+        if parent and parent not in candidate_dirs:
+            candidate_dirs.append(parent)
+
+        if not root.exists():
+            # Fall back to a directory that matches the dataset name if the suggested root is missing
+            guessed_dir = parent / dataset_name if parent else Path(dataset_name)
+            if guessed_dir not in candidate_dirs:
+                candidate_dirs.append(guessed_dir)
+
+        candidates: List[Path] = []
+        seen = set()
+
+        for directory in candidate_dirs:
+            candidates_in_dir = [
+                directory / f"{split}.txt",
+                directory / f"{split.upper()}.txt",
+                directory / f"{split.capitalize()}.txt",
+                directory / f"{split}.TXT",
+                directory / f"{split.upper()}.TXT",
+                directory / f"{split.capitalize()}.TXT",
+            ]
+            for name in name_variants:
+                candidates_in_dir.extend(
+                    [
+                        directory / f"{name}_{suffix}.txt",
+                        directory / f"{name}_{suffix}.TXT",
+                    ]
+                )
+
+            for candidate in candidates_in_dir:
+                if candidate not in seen:
+                    candidates.append(candidate)
+                    seen.add(candidate)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        raise FileNotFoundError(" | ".join(str(c) for c in candidates) + " not found.")
+
+    path = _find_split_file()
     data = np.genfromtxt(path, dtype="float64")
     # Ensure at least 3 cols (parity with ADIAC loader); pad if needed
     rows: List[List[float]] = []
