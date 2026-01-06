@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
@@ -180,10 +182,62 @@ def evaluate_mackey_glass(model: torch.nn.Module, dataset: torch.Tensor, target:
     return error
 
 
+def _prepare_flat_ucr_layout(base_root: Path, dataset_name: str) -> Path:
+    """Handle a flat folder that holds multiple UCR datasets.
+
+    If files like `<dataset>_TRAIN.txt` / `<dataset>_TEST.txt` exist in the
+    base_root, copy them into a dedicated subfolder `<base_root>/<dataset_name>`
+    as `train.txt` / `test.txt`, which the loader expects.
+    """
+
+    dataset_dir = base_root / dataset_name
+    train_path = dataset_dir / "train.txt"
+    test_path = dataset_dir / "test.txt"
+    if train_path.exists() and test_path.exists():
+        return dataset_dir
+
+    candidates = {
+        "train": [
+            base_root / f"{dataset_name}_TRAIN.txt",
+            base_root / f"{dataset_name}_TRAIN.ts",
+            base_root / f"{dataset_name}.TRAIN.txt",
+            base_root / f"{dataset_name}.TRAIN.ts",
+        ],
+        "test": [
+            base_root / f"{dataset_name}_TEST.txt",
+            base_root / f"{dataset_name}_TEST.ts",
+            base_root / f"{dataset_name}.TEST.txt",
+            base_root / f"{dataset_name}.TEST.ts",
+        ],
+    }
+
+    chosen: Dict[str, Path] = {}
+    for split in ("train", "test"):
+        for cand in candidates[split]:
+            if cand.exists():
+                chosen[split] = cand
+                break
+
+    if len(chosen) == 2:
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(chosen["train"], train_path)
+        shutil.copyfile(chosen["test"], test_path)
+        return dataset_dir
+
+    return base_root
+
+
 def resolve_dataset_root(dataset_name: str, base_root: str) -> str:
     env_override = os.environ.get(f"BAYESIAN_DATAROOT_{dataset_name.upper()}")
     if env_override:
         return env_override
+
+    base = Path(base_root)
+
+    # Handle flat layouts where multiple datasets sit in one folder.
+    flat_prepared = _prepare_flat_ucr_layout(base, dataset_name)
+    if flat_prepared.exists():
+        return str(flat_prepared)
 
     candidates: Dict[str, List[str]] = {
         "forda": ["FordA", "forda"],
@@ -192,10 +246,10 @@ def resolve_dataset_root(dataset_name: str, base_root: str) -> str:
         "mackeyglass": ["mackey_glass", "mackeyglass", "MackeyGlass"],
     }
     for candidate in candidates.get(dataset_name, []):
-        path = os.path.join(base_root, candidate)
-        if os.path.exists(path):
-            return path
-    return os.path.join(base_root, dataset_name)
+        path = base / candidate
+        if path.exists():
+            return str(path)
+    return str(base / dataset_name)
 
 
 def get_data_config(dataset_name: str, dataroot: str, batch_size: int, seed: int, device: torch.device, mg_lag: int, mg_washout: int):
