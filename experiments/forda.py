@@ -60,7 +60,7 @@ parser.add_argument('--deepron', action="store_true")
 parser.add_argument('--pron', action="store_true")
 parser.add_argument('--mspron', action="store_true")
 parser.add_argument("--antisymmetric", action="store_true", help="Enable antisymmetric coupling between layers (not topology)")
-parser.add_argument("--coupling_epsilon", type=float, default=0.1, help="Coupling strength for antisymmetric inter-layer connections")
+parser.add_argument("--coupling_epsilon", type=float, default=20.0, help="Coupling strength for antisymmetric inter-layer connections")
 
 parser.add_argument("--matrix_friction", action="store_true")
 parser.add_argument("--input_fn", type=str, default="linear", choices=["linear", "mlp"],
@@ -122,9 +122,8 @@ def test(data_loader, classifier, scaler):
     activations, ys = [], []
     for x, y in tqdm(data_loader):
         x = x.to(device)
-        output = model(x)[-1][0]
-        if isinstance(output, list):
-            output = output[0]
+        states, _ = model(x)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(y)
     activations = torch.cat(activations, dim=0).numpy()
@@ -141,14 +140,15 @@ epsilon = (
     args.epsilon + args.epsilon_range / 2.0,
 )
 
+bs_test = max(args.batch, 256)
 if args.trials > 1:
     assert args.use_test, "Multiple runs are only for the final test phase with the test set."
     train_loader, valid_loader, test_loader = get_ucr_data(
-        args.dataroot, args.batch, args.batch, whole_train=True
+        args.dataroot, args.batch, bs_test, whole_train=True
     )
 else:
     train_loader, valid_loader, test_loader = get_ucr_data(
-        args.dataroot, args.batch, args.batch
+        args.dataroot, args.batch, bs_test
     )
 
 train_accs, valid_accs, test_accs = [], [], []
@@ -158,6 +158,7 @@ for i in range(args.trials):
     set_seed(42 + i)
     
     if args.esn:
+        units_per_layer = int(args.n_hid // args.n_layers)
         model = DeepReservoir(
             n_inp,
             tot_units=args.n_hid,
@@ -165,13 +166,15 @@ for i in range(args.trials):
             concat=True,
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
+            inter_scaling=args.inp_scaling,
             leaky=args.leaky,
-            connectivity_input=args.n_hid,
-            connectivity_recurrent=int((1-args.sparsity)*args.n_hid),
-            connectivity_inter=int(args.n_hid / args.n_layers),
+            connectivity_input=units_per_layer,
+            connectivity_recurrent=units_per_layer,
+            connectivity_inter=units_per_layer,
             cycle=args.cycle,
             antisymmetric=args.antisymmetric,
             epsilon=args.coupling_epsilon,
+            gamma=args.diffusive_gamma,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
@@ -239,9 +242,8 @@ for i in range(args.trials):
     activations, ys = [], []
     for x, y in tqdm(train_loader):
         x = x.to(device)
-        output = model(x)[-1][0]
-        if isinstance(output, list):
-            output = output[0]
+        states, _ = model(x)
+        output = states[:, -1, :]
         activations.append(output.cpu())
         ys.append(y)
     activations = torch.cat(activations, dim=0).numpy()

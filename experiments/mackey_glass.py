@@ -2,6 +2,7 @@ import argparse
 import warnings
 import os
 import numpy as np
+import torch
 import torch.nn.utils
 from sklearn import preprocessing
 from sklearn.linear_model import Ridge
@@ -9,6 +10,7 @@ from sklearn.linear_model import Ridge
 from acds.archetypes import (
     DeepReservoir,
     RandomizedOscillatorsNetwork,
+    DeepRandomizedOscillatorsNetwork,
     PhysicallyImplementableRandomizedOscillatorsNetwork,
     MultistablePhysicallyImplementableRandomizedOscillatorsNetwork,
 )
@@ -49,14 +51,21 @@ parser.add_argument(
     default=4.7,
     help="z controle parameter <epsilon> of the coRNN",
 )
+parser.add_argument("--coupling_epsilon", type=float, default=0.1, help="Coupling strength for DeepRON")
 parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--esn", action="store_true")
 parser.add_argument("--ron", action="store_true")
+parser.add_argument("--deepron", action="store_true")
 parser.add_argument("--pron", action="store_true")
 parser.add_argument("--mspron", action="store_true")
+parser.add_argument("--n_layers", type=int, default=1, help="Number of layers for DeepRON")
+parser.add_argument("--diffusive_gamma", type=float, default=0.0, help="Diffusive term for DeepRON")
 parser.add_argument("--inp_scaling", type=float, default=1.0, help="ESN input scaling")
 parser.add_argument("--rho", type=float, default=0.99, help="ESN spectral radius")
 parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radius")
+parser.add_argument("--antisymmetric", action="store_true")
+parser.add_argument("--concat", action="store_true")
+parser.add_argument("--cycle", action="store_true")
 parser.add_argument("--use_test", action="store_true")
 parser.add_argument(
     "--trials", type=int, default=1, help="How many times to run the experiment"
@@ -135,6 +144,12 @@ for i in range(args.trials):
             connectivity_recurrent=int((1 - args.sparsity) * args.n_hid),
             connectivity_input=args.n_hid,
             leaky=args.leaky,
+            n_layers=args.n_layers,
+            concat=args.concat,
+            antisymmetric=args.antisymmetric,
+            cycle=args.cycle,
+            gamma=args.diffusive_gamma,
+            epsilon=args.coupling_epsilon,
         ).to(device)
     elif args.ron:
         model = RandomizedOscillatorsNetwork(
@@ -149,6 +164,23 @@ for i in range(args.trials):
             sparsity=args.sparsity,
             reservoir_scaler=args.reservoir_scaler,
             device=device,
+        ).to(device)
+    elif args.deepron:
+        model = DeepRandomizedOscillatorsNetwork(
+            n_inp=1,
+            total_units=args.n_hid,
+            dt=args.dt,
+            gamma=gamma,
+            epsilon=epsilon,
+            n_layers=args.n_layers,
+            diffusive_gamma=args.diffusive_gamma,
+            rho=args.rho,
+            input_scaling=args.inp_scaling,
+            inter_scaling=args.inp_scaling,
+            device=device,
+            concat=True,
+            antisymmetric_coupling=args.antisymmetric,
+            coupling_epsilon=args.coupling_epsilon,
         ).to(device)
     elif args.pron:
         model = PhysicallyImplementableRandomizedOscillatorsNetwork(
@@ -186,7 +218,7 @@ for i in range(args.trials):
     activations = activations.reshape(-1, args.n_hid)
     scaler = preprocessing.StandardScaler().fit(activations)
     activations = scaler.transform(activations)
-    classifier = Ridge(max_iter=1000).fit(activations, target)
+    classifier = Ridge(max_iter=1000, alpha=1e-2).fit(activations, target)
     train_nmse = test(train_dataset, train_target, classifier, scaler)
     valid_nmse = (
         test(valid_dataset, valid_target, classifier, scaler)
@@ -200,8 +232,21 @@ for i in range(args.trials):
     valid_mse.append(valid_nmse)
     test_mse.append(test_nmse)
 
+
+# Print results in stdout
+print("Results over ", args.trials, " trials")
+print("Train MSE: ", [round(train_acc, 4) for train_acc in train_mse])
+print("Valid MSE: ", [round(valid_acc, 4) for valid_acc in valid_mse])
+print("Test MSE: ", [round(test_acc, 4) for test_acc in test_mse])
+print("Mean/std Train MSE: ", np.mean(train_mse), np.std(train_mse))
+print("Mean/std Valid MSE: ", np.mean(valid_mse), np.std(valid_mse))
+print("Mean/std Test MSE: ", np.mean(test_mse), np.std(test_mse))
+
+
 if args.ron:
     f = open(os.path.join(args.resultroot, f"MG_log_RON_{args.topology}{args.resultsuffix}.txt"), "a")
+elif args.deepron:
+    f = open(os.path.join(args.resultroot, f"MG_log_DeepRON{args.resultsuffix}.txt"), "a")
 elif args.pron:
     f = open(os.path.join(args.resultroot, f"MG_log_PRON{args.resultsuffix}.txt"), "a")
 elif args.mspron:
