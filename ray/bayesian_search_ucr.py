@@ -168,6 +168,17 @@ def evaluate_classification(model: torch.nn.Module, data_loader, clf, scaler, pr
     return clf.score(activations_np, ys_np)
 
 
+def compute_nrmse(predictions: np.ndarray, target: np.ndarray) -> float:
+    """Compute Normalized Root Mean Squared Error.
+    
+    NRMSE = RMSE / std(target)
+    """
+    mse = np.mean((predictions - target) ** 2)
+    rmse = np.sqrt(mse)
+    target_std = np.std(target)
+    return rmse / target_std if target_std > 0 else rmse
+
+
 @torch.no_grad()
 def evaluate_mackey_glass(model: torch.nn.Module, dataset: torch.Tensor, target: torch.Tensor, clf, scaler, washout: int) -> float:
     seq = dataset.reshape(1, -1, 1).to(next(model.parameters()).device)
@@ -176,8 +187,8 @@ def evaluate_mackey_glass(model: torch.nn.Module, dataset: torch.Tensor, target:
     features = scaler.transform(features)
     preds = clf.predict(features)
     target_np = target.reshape(-1, 1).numpy()
-    error = torch.nn.functional.l1_loss(torch.from_numpy(preds).float(), torch.from_numpy(target_np).float()).item()
-    return error
+    nrmse = compute_nrmse(preds, target_np)
+    return nrmse
 
 
 def resolve_dataset_root(dataset_name: str, base_root: str) -> str:
