@@ -88,6 +88,7 @@ parser.add_argument("--inp_scaling", type=float, default=1.0, help="ESN input sc
 parser.add_argument("--rho", type=float, default=0.99, help="ESN spectral radius")
 parser.add_argument("--leaky", type=float, default=1.0, help="ESN spectral radius")
 parser.add_argument("--cycle", action="store_true", help="Use cycle reservoir")
+parser.add_argument("--zero_recurrence", action="store_true", help="Use zero recurrent connectivity in Deep ESN with cycle")
 parser.add_argument("--antisymmetric", action="store_true", help="Use antisymmetric coupling in the reservoir")
 parser.add_argument("--coupling_epsilon", type=float, default=0.4, help="Coupling epsilon for antisymmetric reservoirs")
 parser.add_argument("--concat", action="store_true", help="Concatenate layer states for output")
@@ -168,6 +169,7 @@ train_accs, valid_accs, test_accs = [], [], []
 for i in range(args.trials):
     if args.esn:
         units_per_layer = args.n_hid // args.n_layers
+        connectivity_recurrent = 0 if args.zero_recurrence else units_per_layer
         model = DeepReservoir(
             input_size=n_inp,
             tot_units=args.n_hid,
@@ -175,7 +177,7 @@ for i in range(args.trials):
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,
-            connectivity_recurrent=units_per_layer,
+            connectivity_recurrent=connectivity_recurrent,
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
@@ -237,7 +239,8 @@ for i in range(args.trials):
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
             concat=args.concat,
-            cycle=args.cycle
+            cycle=args.cycle,
+            connectivity_recurrent=0 if args.zero_recurrence else None
         ).to(device)
     else:
         raise ValueError("Wrong model choice.")

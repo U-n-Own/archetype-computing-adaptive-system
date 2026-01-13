@@ -79,6 +79,7 @@ parser.add_argument("--trials", type=int, default=1, help="Number of trials to r
 parser.add_argument("--n_layers", type=int, default=1, help="Number of layers")
 parser.add_argument("--concat", action="store_true", help="Concatenate layer outputs for readout")
 parser.add_argument("--cycle", action="store_true", help="Use cycle topology for deep reservoirs")
+parser.add_argument("--zero_recurrence", action="store_true", help="Use zero recurrent connectivity in Deep ESN with cycle")
 parser.add_argument(
     "--topology",
     type=str,
@@ -214,6 +215,7 @@ for trial in range(args.trials):
     # Create model based on args
     if args.esn:
         units_per_layer = args.n_hid // args.n_layers
+        connectivity_recurrent = 0 if args.zero_recurrence else units_per_layer
         model = DeepReservoir(
             input_size=n_inp,
             tot_units=args.n_hid,
@@ -221,7 +223,7 @@ for trial in range(args.trials):
             spectral_radius=args.rho,
             input_scaling=args.inp_scaling,
             inter_scaling=args.inp_scaling,
-            connectivity_recurrent=units_per_layer,
+            connectivity_recurrent=connectivity_recurrent,
             connectivity_input=units_per_layer,
             connectivity_inter=units_per_layer,
             leaky=args.leaky,
@@ -285,6 +287,7 @@ for trial in range(args.trials):
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
             cycle=args.cycle,
+            connectivity_recurrent=0 if args.zero_recurrence else None 
         ).to(device)
     else:
         raise ValueError("Please specify a model: --esn, --ron, --pron, --mspron, or --deepron")
