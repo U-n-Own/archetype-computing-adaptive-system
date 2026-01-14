@@ -287,6 +287,7 @@ for trial in range(args.trials):
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
             cycle=args.cycle,
+            concat=args.concat,
             connectivity_recurrent=0 if args.zero_recurrence else None 
         ).to(device)
     else:
