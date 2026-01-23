@@ -1,87 +1,163 @@
 
 import math
-import torch
 import numpy as np
-from acds.archetypes.esn import DeepReservoir
 
 
-def get_units_for_target_params(architecture, n_layers=10, target_params=100000, input_size=1, zero_recurrence=False):
+def get_units_for_target_params(architecture, n_layers=10, target_params=100000, input_size=1, zero_recurrence=False, model_type="esn"):
     """
     Calculates units_per_layer solving the quadratic equation:
     a * N^2 + b * N + c = 0
     where N is units_per_layer.
+    
+    Args:
+        architecture: "cycle", "antisymmetric", "baseline", "baseline_deep"
+        n_layers: number of layers
+        target_params: target number of parameters
+        input_size: input dimension
+        zero_recurrence: if True, recurrent weights are zeroed
+        model_type: "esn", "ron", or "deepron" - affects parameter counting
     """
     
     # Coefficients for aN^2 + bN + c = 0
     # a: scales with N^2 (Recurrent / Inter-layer weights)
-    # b: scales with N (Input weights)
+    # b: scales with N (Input weights, bias)
     # c: -target_params
     
-    if architecture == "cycle":
-        # Cycle uses: 
-        # 1. Recurrent Matrix (N^2)
-        # 2. Cycle Projection Matrix (N^2)
-        # 3. Input Matrix (Input_dim * N) <-- Applied to ALL layers in your implementation
+    if model_type in {"ron", "deepron"}:
+        # DeepRON parameter structure per layer:
+        # - h2h (recurrent): N^2 (zeroed if zero_recurrence, but parameter still exists in memory)
+        # - x2h (input): input_size * N (for cycle mode, ALL layers use input_size)
+        #               OR N * N for layers 1..L-1 in non-cycle mode
+        # - bias: N
+        # - cycle_kernel: N^2 (if cycle enabled)
+        # - C_coupling + C_coupling_T_neg: 2 * N^2 (if antisymmetric)
         
-        if zero_recurrence:
-            # If zero_recurrence is True, we remove the Recurrent Matrix
-            a = 1 * n_layers
+        if architecture == "cycle":
+            # Cycle DeepRON:
+            # Each layer: h2h (N^2) + x2h (input_size * N) + bias (N) + cycle_kernel (N^2)
+            # With zero_recurrence: h2h is zeroed but we count it anyway for buffer size
+            # Actually the memory is allocated, but for "fair" param count we should exclude zeroed params
+            
+            if zero_recurrence:
+                # Only cycle_kernel (N^2) + x2h (input_size * N) + bias (N) per layer
+                a = 1 * n_layers  # cycle_kernel only
+            else:
+                # h2h (N^2) + cycle_kernel (N^2) per layer
+                a = 2 * n_layers
+            
+            # All layers use input_size for x2h in cycle mode + bias
+            b = (input_size + 1) * n_layers
+            c = -target_params
+            
+        elif architecture == "antisymmetric":
+            # Antisymmetric DeepRON:
+            # Each layer: h2h (N^2) + x2h + bias (N) + C_coupling (N^2) + C_coupling_T_neg (N^2)
+            # In antisymmetric mode, layers 1..L-1 use prev_layer output as input (N * N)
+            
+            if zero_recurrence:
+                # No h2h, but still have C_coupling + C_coupling_T_neg
+                # Layer 0: 2*N^2 (coupling) + input_size*N + N
+                # Layers 1..L-1: 2*N^2 (coupling) + N^2 (inter) + N
+                a = 2 * n_layers + (n_layers - 1)  # coupling for all + inter for L-1 layers
+            else:
+                # h2h + C_coupling + C_coupling_T_neg = 3*N^2 per layer
+                # Plus inter-layer: (L-1)*N^2
+                a = 3 * n_layers + (n_layers - 1)
+            
+            # Layer 0: input_size*N + N, Layers 1..L-1: N (bias only, x2h counted in a)
+            b = input_size + n_layers  # input_size for layer 0 + bias for all layers
+            c = -target_params
+            
+        elif architecture in ["baseline", "baseline_deep"]:
+            # Non-cycle, non-antisymmetric DeepRON:
+            # Each layer: h2h (N^2) + x2h + bias (N)
+            # Layer 0: x2h = input_size * N
+            # Layers 1..L-1: x2h = N * N (from prev layer)
+            
+            if zero_recurrence:
+                # Only inter-layer connections for layers 1..L-1
+                a = n_layers - 1
+                if a == 0:
+                    a = 0
+            else:
+                # h2h for all layers + inter for L-1 layers
+                a = n_layers + (n_layers - 1)  # = 2*n_layers - 1
+            
+            # input_size for layer 0 + bias for all layers
+            b = input_size + n_layers
+            c = -target_params
         else:
+            # Fallback for RON/DeepRON
             a = 2 * n_layers
-            
-        b = input_size * n_layers 
-        c = -target_params
-
-    elif architecture == "antisymmetric":
-        # Antisymmetric uses:
-        # 1. Recurrent (N^2)
-        # 2. Coupling C (N^2)
-        # 3. Coupling C_T (N^2)
-        # 4. Input/Inter-layer: 
-        #    - Layer 0: Input_dim * N
-        #    - Layers 1..L: N * N (from prev layer)
-        
-        # Total approx: L*3N^2 (Rec+C+CT) + (L-1)*N^2 (Inter) + 1*Input_dim*N
-        # = (4L - 1) * N^2 + Input_dim * N
-        
-        if zero_recurrence:
-            # Remove Recurrent (N^2)
-            # Total: L*2N^2 (C+CT) + (L-1)*N^2 (Inter) = (3L - 1) * N^2
-            a = 3 * n_layers - 1
-        else:
-            a = 4 * n_layers - 1
-            
-        b = input_size
-        c = -target_params
-        
-    elif architecture in ["baseline", "baseline_deep"]:
-        # DeepESN uses:
-        # 1. Recurrent (N^2)
-        # 2. Input/Inter-layer:
-        #    - Layer 0: Input_dim * N
-        #    - Layers 1..L: N * N
-        
-        # Total: L*N^2 (Rec) + (L-1)*N^2 (Inter) + Input_dim*N
-        # = (2L - 1) * N^2 + Input_dim * N
-        
-        if zero_recurrence:
-            # Remove Recurrent (N^2)
-            # Total: (L-1)*N^2 (Inter)
-            a = n_layers - 1
-            if a == 0: # Single layer with no recurrence -> 0 * N^2 + Input_dim * N = target
-                # This becomes linear: b * N + c = 0 -> N = -c / b
-                a = 0
-        else:
-            a = 2 * n_layers - 1
-            
-        b = input_size
-        c = -target_params
-        
+            b = input_size * n_layers + n_layers
+            c = -target_params
     else:
-        # Fallback default (Naive)
-        a = 2 * n_layers
-        b = 0
-        c = -target_params
+        # ESN parameter counting (original logic)
+        if architecture == "cycle":
+            # Cycle uses: 
+            # 1. Recurrent Matrix (N^2)
+            # 2. Cycle Projection Matrix (N^2)
+            # 3. Input Matrix (Input_dim * N) <-- Applied to ALL layers in your implementation
+            
+            if zero_recurrence:
+                # If zero_recurrence is True, we remove the Recurrent Matrix
+                a = 1 * n_layers
+            else:
+                a = 2 * n_layers
+                
+            b = input_size * n_layers 
+            c = -target_params
+
+        elif architecture == "antisymmetric":
+            # Antisymmetric uses:
+            # 1. Recurrent (N^2)
+            # 2. Coupling C (N^2)
+            # 3. Coupling C_T (N^2)
+            # 4. Input/Inter-layer: 
+            #    - Layer 0: Input_dim * N
+            #    - Layers 1..L: N * N (from prev layer)
+            
+            # Total approx: L*3N^2 (Rec+C+CT) + (L-1)*N^2 (Inter) + 1*Input_dim*N
+            # = (4L - 1) * N^2 + Input_dim * N
+            
+            if zero_recurrence:
+                # Remove Recurrent (N^2)
+                # Total: L*2N^2 (C+CT) + (L-1)*N^2 (Inter) = (3L - 1) * N^2
+                a = 3 * n_layers - 1
+            else:
+                a = 4 * n_layers - 1
+                
+            b = input_size
+            c = -target_params
+            
+        elif architecture in ["baseline", "baseline_deep"]:
+            # DeepESN uses:
+            # 1. Recurrent (N^2)
+            # 2. Input/Inter-layer:
+            #    - Layer 0: Input_dim * N
+            #    - Layers 1..L: N * N
+            
+            # Total: L*N^2 (Rec) + (L-1)*N^2 (Inter) + Input_dim*N
+            # = (2L - 1) * N^2 + Input_dim * N
+            
+            if zero_recurrence:
+                # Remove Recurrent (N^2)
+                # Total: (L-1)*N^2 (Inter)
+                a = n_layers - 1
+                if a == 0: # Single layer with no recurrence -> 0 * N^2 + Input_dim * N = target
+                    # This becomes linear: b * N + c = 0 -> N = -c / b
+                    a = 0
+            else:
+                a = 2 * n_layers - 1
+                
+            b = input_size
+            c = -target_params
+            
+        else:
+            # Fallback default (Naive)
+            a = 2 * n_layers
+            b = 0
+            c = -target_params
 
     # Quadratic Formula: N = (-b + sqrt(b^2 - 4ac)) / 2a
     if a == 0:
@@ -100,8 +176,8 @@ def get_units_for_target_params(architecture, n_layers=10, target_params=100000,
 
     return total_units
 
-def compute_hidden_size(arch, n_layers, target_params=100_000, input_size=96, zero_recurrence=False):
-    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params, input_size=input_size, zero_recurrence=zero_recurrence)
+def compute_hidden_size(arch, n_layers, target_params=100_000, input_size=96, zero_recurrence=False, model_type="esn"):
+    return get_units_for_target_params(arch, n_layers=n_layers, target_params=target_params, input_size=input_size, zero_recurrence=zero_recurrence, model_type=model_type)
 
 def main():
     # Example usage

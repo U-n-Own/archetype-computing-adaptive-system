@@ -232,12 +232,14 @@ for i in range(args.trials):
             gamma=gamma,
             epsilon=epsilon,
             n_layers=args.n_layers,
+            diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
-            inter_scaling=args.inp_scaling,
+            inter_scaling=0,  # Match bayesian_search.py behavior
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
+            reservoir_scaler=args.reservoir_scaler,
             concat=args.concat,
             cycle=args.cycle,
             connectivity_recurrent=0 if args.zero_recurrence else None

@@ -269,6 +269,7 @@ def objective(trial, arch, dataset_name, model_type="esn", multi=None):
         target_params=100_000,
         input_size=input_size,
         zero_recurrence=zero_recurrence,
+        model_type=model_type,
     )
 
     cycle_flag = real_arch == "cycle"
