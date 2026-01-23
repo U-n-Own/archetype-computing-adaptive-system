@@ -330,7 +330,7 @@ def objective(trial: optuna.Trial, arch: str, dataset_name: str, model_type: str
             }
         )
         if model_type == "deepron":
-            config["inter_scaling"] = 0
+            config["inter_scaling"] = 1.0
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -406,7 +406,7 @@ def objective(trial: optuna.Trial, arch: str, dataset_name: str, model_type: str
             diffusive_gamma=config["diffusive_gamma"],
             rho=config["rho"],
             input_scaling=config["inp_scaling"],
-            inter_scaling=config.get("inter_scaling", config["inp_scaling"]),
+            inter_scaling=config["inter_scaling"],
             device=device,
             antisymmetric_coupling=antisymmetric_flag,
             coupling_epsilon=config["coupling_epsilon"],

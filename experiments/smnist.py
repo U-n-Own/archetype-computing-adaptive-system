@@ -235,7 +235,7 @@ for i in range(args.trials):
             diffusive_gamma=args.diffusive_gamma,
             rho=args.rho,
             input_scaling=args.inp_scaling,
-            inter_scaling=0,  # Match bayesian_search.py behavior
+            inter_scaling=1,  
             device=device,
             antisymmetric_coupling=args.antisymmetric,
             coupling_epsilon=args.coupling_epsilon,
