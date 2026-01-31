@@ -249,6 +249,167 @@ def get_data_config(dataset_name: str, dataroot: str, batch_size: int, seed: int
     raise ValueError(f"Unknown dataset: {dataset_name}")
 
 
+def evaluate_best_model_on_test(best_params: dict, arch: str, dataset_name: str, model_type: str, 
+                                base_dataroot: str, mg_lag: int, mg_washout: int, n_test_trials: int = 3) -> List[float]:
+    """Evaluate the best model on test set multiple times and return list of scores."""
+    test_scores = []
+    
+    zero_recurrence = arch == "cycle_zero"
+    real_arch = "cycle" if arch == "cycle_zero" else arch
+    cycle_flag = real_arch == "cycle"
+    antisymmetric_flag = real_arch == "antisymmetric"
+    input_size = 1
+    
+    # Get data configuration
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataset_root = resolve_dataset_root(dataset_name, base_root=base_dataroot)
+    data_config = get_data_config(dataset_name, dataset_root, 64, 42, device, mg_lag, mg_washout)
+    
+    for trial_idx in range(n_test_trials):
+        # Set different seed for each trial
+        set_seed(42 + trial_idx)
+        
+        # Build model with best parameters
+        config = dict(best_params)
+        config.update({
+            "dataset": dataset_name,
+            "model": model_type,
+            "arch": arch,
+            "n_hid": get_units_for_target_params(
+                architecture=real_arch,
+                n_layers=config["n_layers"],
+                target_params=100_000,
+                input_size=input_size,
+                zero_recurrence=zero_recurrence,
+            ),
+            "seed": 42 + trial_idx,
+            "mg_lag": mg_lag,
+            "mg_washout": mg_washout,
+        })
+        
+        # Create model
+        if model_type == "esn":
+            units_per_layer = config["n_hid"] // config["n_layers"]
+            connectivity_recurrent = 0 if zero_recurrence else units_per_layer
+
+            model = DeepReservoir(
+                input_size=input_size,
+                tot_units=config["n_hid"],
+                n_layers=config["n_layers"],
+                spectral_radius=config["rho"],
+                input_scaling=config["inp_scaling"],
+                inter_scaling=config["inp_scaling"],
+                connectivity_recurrent=connectivity_recurrent,
+                connectivity_input=units_per_layer,
+                connectivity_inter=units_per_layer,
+                leaky=config["leaky"],
+                cycle=cycle_flag,
+                concat=config.get("concat", True),
+                linear=False,
+                epsilon=config.get("coupling_epsilon", 20.0),
+                antisymmetric=antisymmetric_flag,
+                gamma=config.get("diffusive_gamma", 0.01),
+            ).to(device)
+        elif model_type == "ron":
+            gamma = (0.9, 1.1)  # Default range
+            epsilon = (0.9, 1.1)  # Default range
+            model = RandomizedOscillatorsNetwork(
+                n_inp=input_size,
+                n_hid=config["n_hid"],
+                dt=config["dt"],
+                gamma=gamma,
+                epsilon=epsilon,
+                diffusive_gamma=config["diffusive_gamma"],
+                rho=config["rho"],
+                input_scaling=config["inp_scaling"],
+                device=device,
+                linear=False,
+                cycle=False,
+                antisymmetric_coupling=antisymmetric_flag,
+                coupling_epsilon=config["coupling_epsilon"],
+            ).to(device)
+        elif model_type == "deepron":
+            gamma = (0.9, 1.1)  # Default range
+            epsilon = (0.9, 1.1)  # Default range
+            model = DeepRandomizedOscillatorsNetwork(
+                n_inp=input_size,
+                total_units=config["n_hid"],
+                dt=config["dt"],
+                gamma=gamma,
+                epsilon=epsilon,
+                n_layers=config["n_layers"],
+                diffusive_gamma=config["diffusive_gamma"],
+                rho=config["rho"],
+                input_scaling=config["inp_scaling"],
+                inter_scaling=config.get("inter_scaling", 1.0),
+                device=device,
+                antisymmetric_coupling=antisymmetric_flag,
+                coupling_epsilon=config["coupling_epsilon"],
+                cycle=cycle_flag,
+                concat=config.get("concat", True),
+                connectivity_recurrent=0 if zero_recurrence else None,
+            ).to(device)
+        else:
+            raise ValueError(f"Model type {model_type} not supported.")
+
+        model.eval()
+        
+        # Train and evaluate on test set
+        if data_config["task"] == "classification":
+            train_loader, valid_loader, test_loader = data_config["loaders"]
+            
+            # Train on training set
+            activations = []
+            labels_all = []
+            with torch.no_grad():
+                for images, labels in train_loader:
+                    out = _model_last_activation(model, data_config["preprocess"](images))
+                    activations.append(out.cpu())
+                    labels_all.append(labels)
+
+            activations_np = torch.cat(activations).numpy()
+            y_np = torch.cat(labels_all).squeeze().long().numpy()
+
+            scaler = preprocessing.StandardScaler().fit(activations_np)
+            X = scaler.transform(activations_np)
+            clf = LogisticRegression(max_iter=1000).fit(X, y_np)
+
+            # Evaluate on test set
+            test_score = evaluate_classification(model, test_loader, clf, scaler, data_config["preprocess"])
+        else:
+            # Regression task (Mackey-Glass)
+            train_dataset, train_target = data_config["train"]
+            test_dataset, test_target = data_config["test"]
+
+            # Train on training set
+            train_seq = train_dataset.reshape(1, -1, 1).to(device)
+            features = _model_state_sequence(model, train_seq)[:, data_config["washout"] :, :]
+            features = features.reshape(-1, features.shape[-1]).cpu().numpy()
+            scaler = preprocessing.StandardScaler().fit(features)
+            X = scaler.transform(features)
+            y = train_target.reshape(-1, 1).numpy()
+            clf = Ridge(max_iter=1000).fit(X, y)
+
+            # Evaluate on test set
+            test_score = evaluate_mackey_glass(
+                model,
+                test_dataset,
+                test_target,
+                clf,
+                scaler,
+                data_config["washout"],
+            )
+        
+        test_scores.append(test_score)
+        
+        # Clean up
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    
+    return test_scores
+
+
 # -------------------------------------------------------------
 # Objective
 # -------------------------------------------------------------
@@ -545,5 +706,41 @@ if __name__ == "__main__":
                     )
 
                     print("\nBest:", study.best_params, "Score:", study.best_value)
+                    
+                    # Evaluate best model on test set with multiple trials
+                    print(f"Evaluating best {model_type} | {arch} model on {dataset} test set...")
+                    test_scores = evaluate_best_model_on_test(
+                        study.best_params,
+                        arch,
+                        dataset,
+                        model_type,
+                        base_dataroot,
+                        mg_lag,
+                        mg_washout,
+                        n_test_trials=3
+                    )
+                    
+                    test_mean = np.mean(test_scores)
+                    test_std = np.std(test_scores, ddof=1)
+                    print(f"Test scores: {test_scores}")
+                    print(f"Test mean: {test_mean:.6f} ± {test_std:.6f}")
+                    
+                    # Log test results
+                    logdir = f"./logs/bayesopt_{model_type}_{dataset}_{arch}"
+                    os.makedirs(logdir, exist_ok=True)
+                    test_log_file = os.path.join(logdir, f"test_results_{model_type}.jsonl")
+                    test_record = {
+                        "dataset": dataset,
+                        "model": model_type,
+                        "arch": arch,
+                        "best_params": study.best_params,
+                        "best_validation_score": float(study.best_value),
+                        "test_scores": [float(s) for s in test_scores],
+                        "test_mean": float(test_mean),
+                        "test_std": float(test_std),
+                        "n_test_trials": 3
+                    }
+                    with open(test_log_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(test_record) + "\n")
     finally:
         tracker.stop()
